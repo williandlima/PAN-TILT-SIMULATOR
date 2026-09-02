@@ -1,155 +1,182 @@
 # Protocolo implementado (DPCL — Pan-Tilt Command Language)
 
-O PTU-D300E (fabricante Teledyne FLIR / Directed Perception, linha
-"E-Series" — que também inclui PTU-D46, PTU-D48E, PTU-D100E) é controlado
-por um conjunto de comandos ASCII conhecido informalmente como **DPCL**
-(Directed Perception / Pan-Tilt Command Language). Esse é o mesmo
-protocolo, com o mesmo conjunto básico de comandos, usado em toda a
-família de pan-tilts desde o PTU-D46 até o D300E — daí ser possível
-validar a estrutura do protocolo mesmo sem acesso direto ao PDF oficial
+O PTU-D300E (Teledyne FLIR / Directed Perception, linha "E-Series", que
+também inclui PTU-D46, PTU-D48E e PTU-D100E) é controlado por um conjunto
+de comandos ASCII conhecido como **DPCL** — o mesmo conjunto básico em
+toda a família, o que permite validar o protocolo mesmo sem o PDF oficial
 do D300E.
 
-## Fontes consultadas
+## Como cada comando foi verificado
 
-Durante o desenvolvimento, tentou-se buscar o *Command Reference Manual*
-oficial da FLIR para conferir byte a byte cada resposta. A política de
-rede desta sessão bloqueou o acesso aos seguintes domínios (todos
-encontrados via busca, mas inacessíveis a partir daqui):
+A documentação oficial da FLIR não pôde ser baixada automaticamente (ver
+"Fontes" no fim). Em vez de adivinhar, o protocolo foi verificado contra
+**código-fonte de drivers que conversam com hardware PTU real**. Cada
+comando da tabela abaixo traz o nível de verificação:
 
-- `movitherm.com` (hospeda `PTU-D300E-Manual.pdf` e
-  `E-Series-Command-Reference-Manual.pdf`)
-- `sustainable-robotics.com` (hospeda cópias dos mesmos manuais)
-- `flir.netx.net`, `oem.flir.com`, `tekgear.com`, `manualslib.com`,
-  `adept.net.au`, `cs.unc.edu`
+| Marca | Significado |
+|-------|-------------|
+| ✅ | Confirmado: aparece literalmente no código de um driver que fala com PTU real |
+| 🟡 | Nomenclatura da família DPCL, sem confirmação byte a byte nesta sessão |
 
-**Recomenda-se obter esses PDFs manualmente** (a busca web confirmou que
-existem publicamente nesses endereços) e comparar com `protocol.py` caso
-seja necessário fidelidade absoluta ao firmware real do seu PTU-D300E.
+**Fontes confirmadas:**
 
-O que **foi** possível confirmar com uma fonte acessível e verificável
-(código-fonte real, não um resumo de terceiros) foi o driver de código
-aberto do ROS `flir_pantilt_d46` (`cburbridge/flir_pantilt_d46`, arquivo
-`src/ptu46_driver.cc`), que se comunica com hardware PTU-D46 real. Dele
-foram extraídos, lendo o código diretamente:
+1. **`hmorris94/FLIR-PTU-Python`** (`flirptu/ptu.py`) — driver Python para
+   as unidades E-Series. Dele vêm os comandos `PR`/`TR`, `PO`/`TO`,
+   `PD`/`TD`, `PNU`/`PXU`/`TNU`/`TXU`, `LU`/`LE`/`LD`, `RP`/`RT`/`RE`,
+   `PU`/`TU`, `B`, `@(baud,0,F)`, `A`, `H`, `C`/`CI`/`CV`, `EE`/`ED` e —
+   o mais valioso — **os textos exatos das respostas em modo verboso**,
+   que aquele driver fatia por offset fixo:
 
-- Formato de comando de eixo: `"%cp%d "` / `"%cs%d "` com `%c` = `'p'`
-  (pan) ou `'t'` (tilt) — ou seja, comando = `<eixo><código><valor><espaço>`,
-  ex.: `"pp1000 "` (equivalente, case-insensitive, a `"PP1000 "`).
-- Formato de resposta numérica: `"*p1500"` — asterisco, letra do eixo
-  em minúsculo, valor, sem separador. Confirmado lendo o parsing real:
-  `buffer[0] == '*'` e `strtod(&buffer[2], NULL)`.
-- Sequência de inicialização usada pelo driver: `" r "` (reset), depois
-  espera a resposta `"!T!T!P!P*"`; em seguida `"ft "` (feedback terse),
-  `"ed "` (echo disable), `"ci "` (modo posição).
-- Caracteres de tipo/eixo: `'p'` (pan), `'t'` (tilt) e códigos de
-  comando `'n'`/`'x'` (limite mín/máx), `'l'`/`'u'` (limite de
-  velocidade inferior/superior), `'v'`/`'i'` (modo velocidade/posição).
+   ```
+   "* Current Pan position is "     -> 26 caracteres
+   "* Current Tilt position is "    -> 27 caracteres
+   "* Target Pan position is "      -> 25 caracteres
+   "* Target Tilt position is "     -> 26 caracteres
+   ```
 
-Essa evidência bate exatamente com a nomenclatura de comandos
-publicamente documentada para a "Pan-Tilt Command Language" (PP, TP, PS,
-TS, PA, TA, PN, PX, TN, TX, PU, TU, PL, TL, CI, CV, FT, FV, ED, EE, R),
-então o simulador implementa esse conjunto completo.
+2. **`cburbridge/flir_pantilt_d46`** (`src/ptu46_driver.cc`) — driver ROS
+   em C++ para PTU-D46. Dele vêm o formato de comando
+   `<eixo><código>[valor] `, a sequência de inicialização (`ft`, `ed`,
+   `ci`, `ld`, reset), a resposta fixa de reset `!T!T!P!P*` e o formato
+   terso `* <valor>` (ele valida `buffer[0] == '*'` e converte o resto).
+
+Os testes em `tests/test_protocol.py` travam esses formatos: se alguém
+alterar uma resposta confirmada, o teste quebra.
 
 ## Formato geral
 
 ```
-<comando> ::= <comando-de-eixo> | <comando-global>
-
-<comando-de-eixo>   ::= <eixo><código>[valor] <terminador>
-<eixo>              ::= "P" | "T"   (case-insensitive)
-
-<comando-global>    ::= <código>[valor] <terminador>
-<terminador>        ::= espaço, CR ou LF (qualquer um funciona)
+<comando>        ::= <comando-de-eixo> | <comando-global>
+<comando-de-eixo>::= <eixo><código>[valor]<terminador>
+<eixo>           ::= "P" | "T"          (não diferencia maiúsculas/minúsculas)
+<terminador>     ::= espaço | CR | LF
 ```
 
-- Omitir o valor faz o comando virar uma **consulta** (query), que
-  retorna o valor atual daquele parâmetro.
-- Vários comandos podem ser enviados em uma única linha, separados por
-  espaço: `"PA3000 TA3000 PS800 TS800 "`.
-- Respostas de sucesso começam com `*`; erros começam com `!`.
-- Se o eco estiver habilitado (`EE`, padrão de fábrica), cada comando
-  recebido é ecoado de volta antes da resposta.
+- Sem valor, o comando é uma **consulta**.
+- Vários comandos podem vir na mesma linha: `PA3000 TA3000 PS800 TS800 `.
+- Resposta de sucesso começa com `*`; erro começa com `!`.
+- **Modo terso** (`FT`): `* <valor>` — é o que drivers sérios usam.
+- **Modo verboso** (`FV`, padrão de fábrica): `* <frase> <valor>`.
+- Com o eco ligado (`EE`, padrão de fábrica), o comando recebido é
+  ecoado antes da resposta.
 
-## Comandos de eixo (prefixo `P`=pan ou `T`=tilt)
+Para máxima compatibilidade, faça como os drivers reais: enviar
+`ED` (desliga eco) e `FT` (feedback terso) logo após abrir a porta.
 
-| Comando | Descrição                                   | Exemplo         | Consulta |
-|---------|----------------------------------------------|-----------------|----------|
-| `PP`/`TP` | Posição desejada (absoluta, em contagens)   | `PP1000 `       | `PP `    |
-| `PO`/`TO` | Deslocamento relativo (offset) de posição   | `PO500 `        | `PO ` (sempre retorna 0, não persiste) |
-| `PS`/`TS` | Velocidade desejada (contagens/s)           | `PS1500 `       | `PS `    |
-| `PA`/`TA` | Aceleração desejada (contagens/s²)          | `PA3000 `       | `PA `    |
-| `PB`/`TB` | Velocidade base (rampa)                     | `PB500 `        | `PB `    |
-| `PU`/`TU` | Limite superior de velocidade               | `PU6000 `       | `PU `    |
-| `PL`/`TL` | Limite inferior de velocidade               | `PL0 `          | `PL `    |
-| `PN`/`TN` | Limite mínimo de posição (curso)            | `PN-15900 `     | `PN `    |
-| `PX`/`TX` | Limite máximo de posição (curso)            | `PX15900 `      | `PX `    |
-| `PH`/`TH` | Halt (para) apenas este eixo                | `PH `           | —        |
+## Comandos de eixo (prefixo `P` = pan, `T` = tilt)
 
-Resposta de consulta (modo terso, padrão): `*p1500\r\n` (posição de pan =
-1500 contagens). Resposta de comando de ajuste: `*\r\n` (terso) ou
-`* OK <descrição>\r\n` (verboso, ver `FV`).
+| Comando | | Descrição | Consulta devolve |
+|---------|--|-----------|------------------|
+| `PP`/`TP` | ✅ | Posição absoluta desejada, em contagens | posição **atual** |
+| `PO`/`TO` | ✅ | Deslocamento relativo de posição | posição **alvo** |
+| `PS`/`TS` | ✅ | Velocidade desejada (contagens/s) | velocidade alvo |
+| `PD`/`TD` | ✅ | Ajuste relativo de velocidade | velocidade **instantânea** |
+| `PA`/`TA` | 🟡 | Aceleração (contagens/s²) | aceleração |
+| `PB`/`TB` | 🟡 | Velocidade base da rampa | velocidade base |
+| `PU`/`TU` | ✅ | Limite superior de velocidade | limite superior |
+| `PL`/`TL` | 🟡 | Limite inferior de velocidade | limite inferior |
+| `PN`/`TN` | ✅ | — (consulta) | limite **mínimo** de curso vigente |
+| `PX`/`TX` | ✅ | — (consulta) | limite **máximo** de curso vigente |
+| `PNU`/`TNU` | ✅ | Define limite mínimo de **usuário** | limite mínimo de usuário |
+| `PXU`/`TXU` | ✅ | Define limite máximo de **usuário** | limite máximo de usuário |
+| `PR`/`TR` | ✅ | — (somente leitura) | **resolução em segundos de arco por contagem** |
+| `PM`/`TM` | 🟡 | Potência em movimento: `L`/`R`/`H` | modo atual |
+| `PH`/`TH` | 🟡 | Potência parado: `O`/`L`/`R` | modo atual |
+
+`PR`/`TR` é o comando que torna o simulador realmente utilizável por um
+driver de verdade: em vez de assumir uma conversão fixa, o cliente
+pergunta a resolução e calcula `contagens/grau = 3600 / resolução`.
 
 ## Comandos globais
 
-| Comando | Descrição                                          |
-|---------|-----------------------------------------------------|
-| `H`     | Halt geral (para pan e tilt imediatamente)           |
-| `A`     | Aguarda a conclusão do movimento em curso antes de responder |
-| `I`     | Modo de execução imediato (padrão)                   |
-| `S`     | Modo de execução "slaved" (registrado; ver limitações)|
-| `R`     | Reset — restaura parâmetros de fábrica. Resposta fixa: `!T!T!P!P*` (confirmado no driver de referência) |
-| `V`     | Consulta a versão de firmware simulada                |
-| `CI`    | Modo de controle = Posição                            |
-| `CV`    | Modo de controle = Velocidade contínua                |
-| `FT`    | Feedback terso (respostas curtas, `*...`)              |
-| `FV`    | Feedback verboso (respostas descritivas)               |
-| `ED`    | Desabilita eco de comandos                             |
-| `EE`    | Habilita eco de comandos                                |
-| `LE`    | Habilita limites de curso (pan e tilt)                  |
-| `LD`    | Desabilita limites de curso (pan e tilt)                |
-| `DF`    | Restaura configurações de fábrica (equivalente a reset) |
-| `DS`    | Salva configurações atuais como padrão                  |
-| `DR`    | Restaura últimas configurações salvas com `DS`          |
+| Comando | | Descrição |
+|---------|--|-----------|
+| `H` | ✅ | Halt geral (para os dois eixos) |
+| `HP` / `HT` | 🟡 | Halt somente do pan / do tilt |
+| `A` | ✅ | Aguarda o fim do movimento antes de responder (segura o enlace) |
+| `I` / `S` | ✅ | Execução imediata / slaved (com `S`, os movimentos só disparam no `A`) |
+| `R` / `RE` | ✅ | Reset de ambos os eixos — resposta fixa `!T!T!P!P*` |
+| `RP` / `RT` | ✅ | Reset somente do pan / do tilt |
+| `C` / `CI` / `CV` | ✅ | Consulta / modo posição / modo velocidade contínua |
+| `F` / `FT` / `FV` | ✅ | Consulta / feedback terso / verboso |
+| `E` / `EE` / `ED` | ✅ | Consulta / eco ligado / desligado |
+| `L` / `LE` / `LU` / `LD` | ✅ | Consulta / limites de fábrica / de usuário / desabilitados |
+| `M` / `ME` / `MD` | ✅ | Consulta / liga / desliga o modo monitor (auto-scan) |
+| `DF` / `DS` / `DR` | 🟡 | Padrões de fábrica / salvar / restaurar configurações |
+| `WP<modo>` / `WT<modo>` | 🟡 | Micropasso: `F`ull, `H`alf, `Q`uarter, `E`ighth, `A`uto |
+| `B<pan>,<tilt>,<vel_pan>,<vel_tilt>` | ✅ | Move os dois eixos em um único comando |
+| `@(<baud>,0,F)` | ✅ | Configura a porta serial do host |
+| `V` | 🟡 | Versão de firmware |
 
-## Modo velocidade contínua (`CV`)
+Atenção a duas pegadinhas de nomenclatura:
 
-Quando o modo de controle é `CV`, os comandos `PS`/`TS` passam a definir
-uma **velocidade contínua** (com sinal) em vez de uma velocidade máxima
-para um movimento até uma posição-alvo — o eixo se move continuamente
-naquele sentido até receber `H`/`PH`/`TH` ou até atingir um limite de
-curso (se `LE` estiver ativo). Isso corresponde ao comportamento
-documentado de "Velocity Move Mode" da família DPCL.
+- **`LU` significa "limites de usuário"**, não "limite superior". O
+  limite superior de velocidade é `PU`/`TU`.
+- **`PD`/`TD` não é "posição delta"**: é velocidade — consulta a
+  velocidade instantânea e, com valor, aplica um delta na velocidade.
+
+## Comportamentos simulados de verdade
+
+Não são apenas respostas: o simulador tem física e estado.
+
+- **Perfil de movimento trapezoidal** com aceleração, velocidade base e
+  limites inferior/superior de velocidade — um `PP` distante leva o
+  tempo correspondente, e `PD` devolve a velocidade instantânea real
+  durante a rampa.
+- **Micropasso altera a resolução** (`WPQ` muda o que `PR` responde) e as
+  contagens são reescaladas preservando o ângulo físico — como no
+  hardware.
+- **Limites de curso** em três modos, aplicados de fato ao movimento:
+  um `PP` fora de faixa é truncado no limite vigente.
+- **Modo velocidade** (`CV`): o eixo gira continuamente na velocidade de
+  `PS`/`TS` até `H` ou até bater no limite.
+- **Execução slaved** (`S`): `PP`/`TP` ficam pendentes e os dois eixos
+  partem juntos no `A`.
+- **Modo monitor** (`ME`): varredura automática entre os limites.
+- **`A` segura o enlace** enquanto o movimento não termina — nenhum outro
+  comando é processado nesse intervalo, como no equipamento real. Há um
+  timeout de segurança (`DPCLProtocol(await_timeout=...)`) para o enlace
+  nunca ficar preso para sempre.
 
 ## Erros
 
-Respostas de erro seguem o formato `!<código> <mensagem>\r\n`, por
-exemplo:
-
 ```
-!1 Unknown command 'ZZ'
-!2 Invalid integer value 'abc'
+! Unknown command 'ZZ'
+! Invalid integer value 'abc'
+! Resolution is read-only
 ```
 
-Esse formato (prefixo `!`) foi escolhido por consistência com a única
-resposta de erro/status confirmada no hardware real (`!T!T!P!P*` do
-comando de reset), mas os textos das mensagens são uma convenção deste
-simulador — ajuste-os em `pantiltsim/protocol.py` se precisar bater
-exatamente com mensagens do firmware real.
+O prefixo `!` é consistente com a única resposta de erro/status
+confirmada no hardware (`!T!T!P!P*` do reset); os **textos** das
+mensagens são convenção deste simulador.
 
-## Limitações conhecidas / simplificações
+## Limitações conhecidas
 
-- O modo "Slaved" (`S`/`I`) é registrado no estado do dispositivo mas o
-  simulador executa todo comando de posição imediatamente — não há uma
-  fila de movimentos sincronizados aguardando um `A` global antes de
-  disparar pan e tilt juntos.
-- `LE`/`LD` neste simulador afetam pan e tilt simultaneamente (não há
-  comando separado por eixo); no firmware real pode haver variações.
-- Os valores padrão de resolução (contagens/grau), curso e velocidade
-  máxima em `pantiltsim/device.py` (`AxisConfig`) são parâmetros
-  **configuráveis**, não os valores exatos de fábrica do seu PTU-D300E
-  específico (que variam conforme a opção de gear ratio/encoder do
-  pedido) — ajuste conforme a etiqueta/datasheet do seu equipamento.
-- Não foi implementado o subconjunto binário do protocolo nem Pelco-D
-  (mencionados na documentação da FLIR como protocolos alternativos
-  suportados pela unidade) — apenas o protocolo ASCII, que é o padrão
-  para controle via RS-232/RS-485/USB.
+- Os modos de potência (`PM`/`PH`) são registrados e reportados, mas não
+  têm efeito físico simulado (torque de retenção, back-drive).
+- `LE`/`LU`/`LD` valem para os dois eixos ao mesmo tempo.
+- O comando `PO` (offset) é aplicado imediatamente mesmo em modo slaved.
+- Não foram implementados o subconjunto **binário** do protocolo nem o
+  **Pelco-D**, ambos citados pela FLIR como alternativas suportadas pela
+  unidade; aqui só o protocolo ASCII, que é o padrão para RS-232/RS-485/USB.
+- Os valores default de resolução, curso e velocidade (em
+  `pantiltsim/config.py`) são configuráveis e **não** são os números de
+  fábrica de uma unidade específica — eles variam conforme a redução e o
+  encoder da unidade encomendada. Ajuste pelo `--config` conforme a
+  etiqueta/datasheet do seu equipamento.
+
+## Fontes
+
+Documentos oficiais localizados por busca, mas **bloqueados pela política
+de rede** do ambiente de desenvolvimento (baixe-os manualmente para
+conferência):
+
+- `movitherm.com` — `PTU-D300E-Manual.pdf`, `E-Series-Command-Reference-Manual.pdf`
+- `sustainable-robotics.com` — cópias dos mesmos manuais
+- `flir.netx.net`, `oem.flir.com`, `tekgear.com`, `manualslib.com`,
+  `adept.net.au`, `cs.unc.edu`
+
+Fontes efetivamente acessadas e usadas para verificação:
+
+- <https://github.com/hmorris94/FLIR-PTU-Python> — `flirptu/ptu.py`
+- <https://github.com/cburbridge/flir_pantilt_d46> — `src/ptu46_driver.cc`

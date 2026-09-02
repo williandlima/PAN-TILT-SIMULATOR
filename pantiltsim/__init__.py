@@ -6,4 +6,4 @@ transporte serial (RS-485 ou USB-serial) e interface gráfica PyQt5 para
 demonstração visual do movimento.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

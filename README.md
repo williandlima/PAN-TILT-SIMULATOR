@@ -1,145 +1,176 @@
 # Simulador do Pan-Tilt PTU-D300E (RS-485 / USB)
 
-Simulador em Python do pan-tilt **PTU-D300E** (FLIR / Directed
-Perception), que fala o protocolo ASCII de comando do fabricante (DPCL —
-*Pan-Tilt Command Language*) por porta serial, e mostra graficamente
-(PyQt5) o movimento de pan e tilt de uma unidade com antena helicoidal
-acoplada, em tempo real, conforme os comandos recebidos.
+Simulador em Python do pan-tilt **PTU-D300E** (Teledyne FLIR / Directed
+Perception) que fala o protocolo ASCII de comando do fabricante (DPCL —
+*Pan-Tilt Command Language*) por porta serial, e mostra em tempo real, em
+3D, a unidade com uma antena helicoidal acoplada respondendo aos
+comandos.
 
-Funciona tanto como ferramenta de **desenvolvimento/teste** de um
-controlador que fala com o PTU real (você aponta seu software cliente
-para a porta serial do simulador, no PC ou na BeagleBone, no lugar do
-hardware), quanto como **demonstração visual** de como a unidade se
-comportaria.
-
-![status](https://img.shields.io/badge/status-em%20desenvolvimento-orange)
+Serve como banco de testes para desenvolver o seu controlador sem o
+equipamento na bancada — aponte o software cliente para a porta serial do
+simulador (no PC ou na BeagleBone) em vez do hardware — e como
+demonstração visual do comportamento do equipamento.
 
 ## Funcionalidades
 
-1. Protocolo ASCII do fabricante (DPCL) implementado em `pantiltsim/protocol.py`
-   — comandos de posição, velocidade, aceleração, limites de curso e de
-   velocidade, modos de controle (posição/velocidade), eco, feedback
-   terso/verboso, reset, save/restore de configurações. Veja
-   [`docs/PROTOCOL.md`](docs/PROTOCOL.md) para a lista completa e as
-   fontes usadas para validar o protocolo.
-2. Comunicação via **RS-485** (com toggle automático de RTS via
-   `pyserial`, para adaptadores que suportam `RS485Settings`) e via
-   **USB** (porta serial virtual) — o mesmo código de protocolo funciona
-   nos dois casos, pois ambos aparecem como uma porta serial para o
-   sistema operacional.
-3. Roda em **Linux/BeagleBone** (inclusive sem monitor, modo
-   `--headless`) e em **Windows/notebook** (GUI ou headless).
-4. Interface gráfica em **PyQt5** com desenho vetorial animado da
-   unidade pan-tilt com antena helicoidal acoplada, atualizado em tempo
-   real conforme a posição muda.
-5. Painel mostrando a posição atual e o alvo de pan/tilt, atualizados
-   conforme os valores recebidos via RS-485/USB seguindo o protocolo do
-   fabricante (ou via controle manual pela própria GUI, que usa o mesmo
-   caminho de comando ASCII internamente).
-6. Cobre as principais funcionalidades de controle do PTU-D300E:
-   posicionamento absoluto e relativo, controle de velocidade/aceleração,
-   modo de velocidade contínua, limites de curso configuráveis, halt,
-   reset e consulta de status — ver limitações documentadas em
-   `docs/PROTOCOL.md`.
+1. **Protocolo do fabricante** (`pantiltsim/protocol.py`): posição
+   absoluta e relativa, velocidade, aceleração, velocidade base, limites
+   de velocidade, limites de curso de fábrica e de usuário, resolução
+   (`PR`/`TR`), modos de controle posição/velocidade, execução
+   imediata/slaved, halt por eixo, resets por eixo, monitor/auto-scan,
+   micropasso, potência, eco, feedback terso/verboso, movimento
+   combinado (`B`) e configuração da porta (`@(baud,0,F)`).
+   Os formatos de comando e resposta foram **verificados contra drivers
+   de código aberto que conversam com hardware PTU real** — ver
+   [`docs/PROTOCOL.md`](docs/PROTOCOL.md).
+2. **RS-485 e USB**: o mesmo código de protocolo atende os dois casos
+   (o RS-485 liga o half-duplex por RTS do pyserial; o USB é a porta
+   serial virtual que a própria unidade expõe), com reconexão automática
+   se o cabo cair.
+3. **Linux/BeagleBone e Windows**: modo `--gui` e modo `--headless`
+   (sem monitor, para rodar via SSH na BeagleBone).
+4. **Visualização 3D** (PyQt5 + QPainter, sem dependência 3D externa):
+   base, prato giratório, garfo de dois braços, eixo de tilt, placa de
+   payload e antena helicoidal — pan e tilt geometricamente corretos,
+   com bússola de pan, arco de tilt e indicação do alvo comandado.
+5. **Posição mostrada conforme o valor recebido** por RS-485/USB, em
+   graus e em contagens, junto com resolução, curso, velocidade
+   instantânea e modos ativos.
+6. **Comportamento físico simulado**, não só respostas: perfil de
+   movimento trapezoidal, limites de curso realmente aplicados,
+   micropasso alterando a resolução, `A` (await) segurando o enlace até o
+   movimento terminar.
 
 ## Instalação
 
 ```bash
 python3 -m venv .venv
-source .venv/bin/activate        # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+pip install -e ".[gui]"            # ou: pip install -r requirements.txt
 ```
 
-Dependências: `pyserial` (comunicação serial) e `PyQt5` (interface
-gráfica — necessária apenas para o modo `--gui`).
+Sem a GUI (BeagleBone headless), `pip install -e .` basta — só o pyserial.
 
 ## Uso
 
-### Interface gráfica
-
 ```bash
-python3 -m pantiltsim.main --gui
-# ou simplesmente:
-python3 -m pantiltsim.main
+ptu-sim --gui                                          # interface gráfica
+ptu-sim --headless --port /dev/ttyUSB0 --baud 9600     # BeagleBone via SSH
+ptu-sim --headless --port /dev/ttyO4 --rs485           # UART RS-485 nativa
+ptu-sim --list-ports                                   # lista as portas
+ptu-sim --gui --config meu_ptu.json                    # parâmetros do seu equipamento
 ```
+
+(ou `python3 -m pantiltsim.main ...` sem instalar o pacote.)
 
 Na GUI:
-- **Conexão**: escolha a porta serial (botão "Atualizar" relista as
-  portas disponíveis), o tipo de interface (USB ou RS-485) e o baud rate,
-  depois clique em "Conectar". A partir daí, comandos DPCL recebidos por
-  essa porta (de um controlador real ou de outro programa) movem a
-  unidade simulada e aparecem no log.
-- **Controle manual**: mesmo sem conectar uma porta serial, dá para
-  mover a unidade simulada diretamente pela GUI (spinboxes de pan/tilt,
-  botões de jog, halt, reset) — os cliques disparam os mesmos comandos
-  ASCII (`PP`, `TP`, `PS`, `TS`, `H`, `R`, ...) internamente, visíveis no
-  log do protocolo.
-- **Log do protocolo**: mostra cada comando recebido e a resposta
-  enviada, útil para depurar um cliente/controlador real.
 
-### Modo headless (sem tela — ex.: BeagleBone via SSH)
+- **Conexão** — porta, USB ou RS-485, baud rate e reconexão automática.
+- **Telemetria** — pan/tilt em graus e contagens, resolução, curso,
+  velocidade e modos ativos.
+- **Controle** — ir para posição, jog, halt por eixo, reset, await,
+  monitor/auto-scan. Cada botão envia comandos DPCL de verdade.
+- **Configuração** — micropasso, limites, modos de controle, potência,
+  eco, feedback, execução slaved, salvar/restaurar.
+- **Terminal DPCL** — digite comandos crus (`PP1000`, `PR`, `PS`…) e veja
+  a resposta, junto com todo o tráfego da porta serial.
 
-```bash
-python3 -m pantiltsim.main --headless --port /dev/ttyUSB0 --baud 9600
-python3 -m pantiltsim.main --headless --port /dev/ttyUSB0 --baud 9600 --rs485
-```
+Tudo o que a interface faz passa pelo mesmo interpretador do protocolo
+usado pela porta serial — mover pela GUI exercita o mesmo caminho de
+código que um controlador externo exercitaria.
 
-Imprime cada comando recebido e a posição atual periodicamente no
-terminal. `Ctrl+C` encerra.
+## Cliente de exemplo
 
-### Listar portas seriais disponíveis
+`tools/ptu_client.py` é um controlador mínimo que serve tanto para testar
+o simulador quanto de referência para o seu software (o mesmo código
+funciona apontado para o PTU real):
 
 ```bash
-python3 -m pantiltsim.main --list-ports
+python3 tools/ptu_client.py --port /dev/pts/5 --demo     # sequência de demonstração
+python3 tools/ptu_client.py --port COM4                  # terminal interativo
+python3 tools/ptu_client.py --port COM4 --command PR     # um comando só
 ```
 
-## Testando localmente sem hardware serial real
+A sequência `--demo` consulta a resolução com `PR`/`TR`, calcula
+contagens/grau, lê os limites, ajusta velocidade, move para três posições
+usando `A` (await) e confere a posição alcançada — exatamente o que um
+driver real faz.
 
-Para testar um controlador de verdade contra o simulador sem precisar de
-um adaptador RS-485/USB físico, crie um par de portas seriais virtuais
-ligadas uma na outra e aponte o simulador para uma ponta e o seu
-controlador para a outra:
+## Testando sem hardware serial
+
+Crie um par de portas seriais virtuais e ligue simulador e controlador
+nas duas pontas:
 
 - **Linux**: `socat -d -d pty,raw,echo=0,link=/tmp/ptu-sim pty,raw,echo=0,link=/tmp/ptu-cliente`
 - **Windows**: [com0com](https://sourceforge.net/projects/com0com/) cria
-  um par de portas COM virtuais (ex.: `COM10`↔`COM11`).
+  um par de portas COM virtuais.
 
-## Estrutura do projeto
+A suíte de testes já faz isso automaticamente com PTYs
+(`tests/test_end_to_end_serial.py`).
 
+## Configuração do modelo
+
+Resolução, curso e velocidades variam conforme a redução e o encoder da
+unidade encomendada — por isso são configuráveis:
+
+```json
+{
+  "model_name": "PTU-D300E",
+  "pan":  { "full_step_arcsec": 185.1428, "factory_min_deg": -159.0, "factory_max_deg": 159.0 },
+  "tilt": { "factory_min_deg": -90.0, "factory_max_deg": 30.0, "max_speed_deg_per_sec": 40.0 }
+}
 ```
-pantiltsim/
-  device.py           # Máquina de estados do PTU (posição, velocidade, limites, modos)
-  protocol.py          # Parser/executor do protocolo ASCII DPCL do fabricante
-  transport_serial.py  # Transporte serial (RS-485 / USB) via pyserial
-  app_cli.py            # Modo headless (console)
-  main.py                # Ponto de entrada (--gui / --headless / --list-ports)
-  gui/
-    main_window.py        # Janela principal (conexão, controle manual, log)
-    pantilt_widget.py      # Desenho vetorial animado do PTU + antena helicoidal
-docs/
-  PROTOCOL.md           # Especificação do protocolo, fontes e limitações
-tests/
-  test_device.py        # Testes da simulação de movimento
-  test_protocol.py       # Testes do parser/executor de comandos
-```
+
+Ajuste conforme a etiqueta/datasheet do seu equipamento e passe com
+`--config`. Os defaults são valores plausíveis da família, **não** os
+números de fábrica de uma unidade específica.
 
 ## Testes
 
 ```bash
-pip install pytest
+pip install -e ".[dev]"
 pytest
 ```
 
-## Sobre a fidelidade ao protocolo real
+44 testes, em três níveis:
 
-O acesso automatizado aos PDFs oficiais do *Command Reference Manual* da
-FLIR foi bloqueado pela política de rede do ambiente onde este projeto
-foi desenvolvido. A estrutura do protocolo (formato de comando, formato
-de resposta numérica e a resposta de reset) foi verificada lendo o
-código-fonte de um driver de código aberto que fala com hardware PTU
-real; os demais comandos seguem a nomenclatura publicamente documentada
-da família DPCL. Veja [`docs/PROTOCOL.md`](docs/PROTOCOL.md) para os
-detalhes, as fontes tentadas/confirmadas e o que ajustar caso você tenha
-acesso ao manual oficial do seu PTU-D300E e precise de fidelidade
-numérica exata (resolução de encoder, curso e velocidades máximas variam
-conforme a configuração do equipamento pedido).
+- `tests/test_device.py` — física do movimento, limites, micropasso,
+  modos.
+- `tests/test_protocol.py` — cada comando e os formatos de resposta,
+  incluindo os offsets exatos que os drivers reais usam para fatiar as
+  respostas verbosas.
+- `tests/test_end_to_end_serial.py` — **ponta a ponta por uma porta
+  serial real** (par de PTYs): um controlador externo consulta resolução,
+  comanda movimento, aguarda com `A`, dá halt, envia vários comandos numa
+  escrita só e verifica os limites — validando transporte, protocolo e
+  motor de simulação juntos.
+
+## Estrutura
+
+```
+pantiltsim/
+  device.py            # eixos pan/tilt: posição, velocidade, limites, modos
+  protocol.py          # interpretador do protocolo ASCII do fabricante
+  transport_serial.py  # porta serial RS-485/USB, com reconexão
+  config.py            # parâmetros do modelo (JSON)
+  app_cli.py           # modo headless
+  main.py              # ponto de entrada
+  gui/
+    main_window.py     # conexão, telemetria, controle, terminal DPCL
+    pantilt_widget.py  # vista principal e instrumentos
+    ptu_render.py      # renderizador 3D do PTU com antena helicoidal
+tools/ptu_client.py    # controlador de exemplo / referência
+docs/PROTOCOL.md       # protocolo, verificação, limitações
+```
+
+## Fidelidade ao equipamento real
+
+Os PDFs oficiais da FLIR estavam bloqueados pela política de rede do
+ambiente onde este projeto foi desenvolvido. Em vez de adivinhar, o
+protocolo foi verificado contra o código-fonte de dois drivers de código
+aberto que conversam com unidades PTU físicas — inclusive os textos
+exatos das respostas em modo verboso, que aqueles drivers fatiam por
+offset fixo. [`docs/PROTOCOL.md`](docs/PROTOCOL.md) marca comando a
+comando o que está **confirmado** (✅) e o que segue a nomenclatura da
+família sem confirmação byte a byte (🟡), e lista os documentos oficiais
+para conferência se você tiver acesso a eles.

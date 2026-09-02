@@ -1,291 +1,476 @@
 """Protocolo ASCII do fabricante (DPCL - Pan-Tilt Command Language).
 
-Este é o protocolo de comando serial usado pelas unidades Pan-Tilt da
-FLIR / Directed Perception (PTU-D46, D48E, D100E, D300E — família
-"E-Series" e anteriores são compatíveis com o mesmo conjunto básico de
-comandos). O formato de comando e resposta implementado aqui foi
-verificado contra o driver de código aberto `flir_pantilt_d46`
-(cburbridge/flir_pantilt_d46, arquivo src/ptu46_driver.cc), que fala com
-hardware real:
+Protocolo de comando serial das unidades Pan-Tilt da FLIR / Directed
+Perception (PTU-D46, D48E, D100E, D300E). O conjunto de comandos e o
+formato das respostas implementados aqui foram verificados contra dois
+drivers de código aberto que conversam com hardware PTU real:
 
-    - Comando de eixo: "<eixo><código>[valor] " (ex.: "PP1000 " define a
-      posição de pan; "PP " sem valor consulta a posição atual de pan).
-    - Resposta numérica de consulta: "*<eixo minúsculo><valor>" (ex.:
-      "*p1500"). Confirmado lendo GetPosition()/GetSpeed() do driver
-      citado, que faz strtod(&buffer[2], ...) após checar buffer[0]=='*'.
-    - Comando de reset ("R" / " r "): resposta "!T!T!P!P*" (idem, valor
-      hardcoded checado pelo driver após o reset).
+``hmorris94/FLIR-PTU-Python`` (``flirptu/ptu.py``) — dele vêm os
+comandos ``PR``/``TR`` (resolução), ``PO``/``TO`` (posição alvo),
+``PD``/``TD`` (velocidade atual / delta), ``PNU``/``PXU``/``TNU``/``TXU``
+(limites de usuário), ``LU``/``LE``/``LD``, ``RP``/``RT``/``RE``,
+``PU``/``TU``, ``B`` (movimento combinado), ``@(baud,0,F)`` e — o mais
+importante — os textos exatos das respostas em modo verboso, que aquele
+driver fatia por offset fixo::
 
-Os demais comandos (aceleração, base speed, limites de velocidade/posição,
-modos de controle, echo, feedback verboso/terso, save/restore de
-defaults) seguem a nomenclatura documentada publicamente para a "Pan-Tilt
-Command Language" (mesma família de comandos usada desde o PTU-D46 até o
-D300E). O acesso automatizado aos PDFs oficiais da FLIR para conferir
-byte-a-byte cada resposta foi bloqueado pela política de rede desta
-sessão (ver docs/PROTOCOL.md para a lista de fontes tentadas e o que foi
-efetivamente confirmado). Onde o formato exato da resposta não pôde ser
-confirmado, foi adotada uma convenção consistente com o padrão
-confirmado ("*" para sucesso, "!" para erro) — ajuste em protocol.py se o
-seu firmware real usar um formato diferente.
+    "* Current Pan position is "     (26 caracteres)
+    "* Current Tilt position is "    (27 caracteres)
+    "* Target Pan position is "      (25 caracteres)
+    "* Target Tilt position is "     (26 caracteres)
+
+``cburbridge/flir_pantilt_d46`` (``src/ptu46_driver.cc``) — dele vêm o
+formato de comando ``<eixo><código>[valor] ``, a sequência de
+inicialização (``ft``, ``ed``, ``ci``, ``ld``, reset), a resposta fixa de
+reset ``!T!T!P!P*`` e o formato terso ``* <valor>`` (ele valida
+``buffer[0] == '*'`` e converte o restante após remover espaços).
+
+Resumo do formato:
+
+    - Comando: ``<eixo><código>[valor]`` terminado por espaço ou CR/LF.
+      Sem valor, o comando vira uma consulta.
+    - Resposta de sucesso: começa com ``*``; erro: começa com ``!``.
+    - Modo terso (``FT``): ``* <valor>``.
+    - Modo verboso (``FV``, padrão de fábrica): ``* <frase> <valor>``.
+
+Ver ``docs/PROTOCOL.md`` para a tabela completa e para a marcação do que
+é confirmado por hardware real versus o que segue a nomenclatura da
+família DPCL sem confirmação byte a byte.
 """
 
 from __future__ import annotations
 
+import logging
 import re
 import time
 
-from .device import ControlMode, PanTiltDevice
+from .device import ControlMode, LimitMode, PanTiltDevice, PowerMode, StepMode
 
-_AXIS_ATTR_BY_CODE = {
-    "S": "desired_speed",
-    "A": "acceleration",
-    "B": "base_speed",
-    "U": "upper_speed_limit",
-    "L": "lower_speed_limit",
-    "N": "min_limit",
-    "X": "max_limit",
+log = logging.getLogger(__name__)
+
+_TOKEN_SPLIT_RE = re.compile(r"\s+")
+_BAUD_RE = re.compile(r"^@\((\d+),(\d+),([A-Z])\)$")
+
+_STEP_MODE_BY_LETTER = {
+    "F": StepMode.FULL,
+    "H": StepMode.HALF,
+    "Q": StepMode.QUARTER,
+    "E": StepMode.EIGHTH,
+    "A": StepMode.AUTO,
 }
 
-_GLOBAL_TWO_CHAR = {
-    "CI", "CV", "FT", "FV", "ED", "EE", "LE", "LD", "DF", "DS", "DR",
+_MOVE_POWER_BY_LETTER = {
+    "L": PowerMode.LOW,
+    "R": PowerMode.REGULATED,
+    "H": PowerMode.HIGH,
 }
 
-_GLOBAL_ONE_CHAR = {"H", "A", "I", "S", "R", "V", "C", "F", "E", "L", "D"}
-
-_TOKEN_RE = re.compile(r"\s+")
+_HOLD_POWER_BY_LETTER = {
+    "O": PowerMode.OFF,
+    "L": PowerMode.LOW,
+    "R": PowerMode.REGULATED,
+}
 
 
 class ProtocolError(Exception):
-    def __init__(self, code: int, message: str):
-        super().__init__(message)
-        self.code = code
-        self.message = message
+    """Erro de comando, devolvido ao cliente como resposta ``! <mensagem>``."""
 
 
 class DPCLProtocol:
-    """Interpreta bytes recebidos e produz bytes de resposta, contra um PanTiltDevice."""
+    """Interpreta bytes recebidos e devolve bytes de resposta."""
 
-    def __init__(self, device: PanTiltDevice, on_command=None):
+    def __init__(self, device: PanTiltDevice, on_command=None, await_timeout: float = 60.0):
         self.device = device
+        self.on_command = on_command
+        # Tempo máximo que o comando ``A`` segura o enlace esperando o
+        # movimento terminar. Como no hardware real, nenhum outro comando é
+        # processado enquanto o await está pendente; o limite existe apenas
+        # para o enlace nunca ficar preso para sempre.
+        self.await_timeout = await_timeout
         self._buffer = ""
-        self._saved_defaults: dict | None = None
-        self.on_command = on_command  # callback opcional(token:str, response:str) para log/GUI
+        self._saved: dict | None = None
 
     # ------------------------------------------------------------------
     def feed(self, data: bytes) -> bytes:
-        text = data.decode("ascii", errors="ignore")
-        self._buffer += text
-        out = []
+        """Consome bytes do enlace serial e devolve os bytes de resposta.
+
+        Aceita fluxo fragmentado: tokens incompletos ficam no buffer até
+        chegar o terminador (espaço, CR ou LF).
+        """
+        self._buffer += data.decode("ascii", errors="ignore")
+        out: list[str] = []
         while True:
-            m = _TOKEN_RE.search(self._buffer)
-            if not m:
+            match = _TOKEN_SPLIT_RE.search(self._buffer)
+            if not match:
                 break
-            token = self._buffer[: m.start()]
-            self._buffer = self._buffer[m.end():]
+            token = self._buffer[: match.start()]
+            self._buffer = self._buffer[match.end():]
             if token:
                 out.append(self._process_token(token))
         return "".join(out).encode("ascii", errors="replace")
+
+    def execute_line(self, line: str) -> str:
+        """Atalho para testes/GUI: executa uma linha de comandos e devolve texto."""
+        if not line.endswith((" ", "\r", "\n")):
+            line += " "
+        return self.feed(line.encode("ascii", errors="ignore")).decode("ascii")
 
     # ------------------------------------------------------------------
     def _process_token(self, raw_token: str) -> str:
         token = raw_token.upper()
         echo_was_enabled = self.device.echo_enabled
         try:
-            response_body = self._execute(token)
+            if token == "A":
+                # Await não pode segurar o lock: o motor de simulação precisa girar.
+                body = self._await_completion()
+            else:
+                with self.device.lock:
+                    body = self._execute(token)
         except ProtocolError as exc:
-            response_body = f"!{exc.code} {exc.message}\r\n"
-        except Exception as exc:  # defesa contra qualquer bug de parsing
-            response_body = f"!9 Internal error: {exc}\r\n"
+            body = f"! {exc}\r\n"
+        except Exception as exc:  # pragma: no cover - rede de segurança
+            log.exception("Falha ao processar comando %r", raw_token)
+            body = f"! Internal error: {exc}\r\n"
 
-        if echo_was_enabled:
-            result = f"{raw_token}\r\n{response_body}"
-        else:
-            result = response_body
-
+        result = f"{raw_token}\r\n{body}" if echo_was_enabled else body
         if self.on_command is not None:
             self.on_command(raw_token, result)
         return result
 
-    # ------------------------------------------------------------------
     def _execute(self, token: str) -> str:
-        first = token[0]
-        if first in ("P", "T"):
+        if token[0] in ("P", "T"):
             return self._execute_axis_command(token)
         return self._execute_global_command(token)
 
-    def _axis(self, letter: str):
-        return self.device.pan if letter == "P" else self.device.tilt
-
+    # -- comandos de eixo ------------------------------------------------
     def _execute_axis_command(self, token: str) -> str:
         axis_letter = token[0]
-        axis = self._axis(axis_letter)
+        axis = self.device.pan if axis_letter == "P" else self.device.tilt
+        axis_name = "Pan" if axis_letter == "P" else "Tilt"
         rest = token[1:]
         if not rest:
-            raise ProtocolError(1, f"Missing axis command code in '{token}'")
+            raise ProtocolError(f"Incomplete command '{token}'")
 
-        code = rest[0]
-        value_str = rest[1:]
+        code, arg = rest[0], rest[1:]
 
         if code == "P":
-            return self._axis_position(axis, axis_letter, value_str)
+            if arg == "":
+                return self._value(axis.position, f"Current {axis_name} position is")
+            self.device.request_target(axis.spec.name, self._parse_int(arg))
+            return self._ok()
+
         if code == "O":
-            return self._axis_offset(axis, axis_letter, value_str)
-        if code == "H":
-            if value_str:
-                raise ProtocolError(2, "Halt command takes no value")
-            axis.halt()
-            return self._ack(f"{axis_letter} HALT")
-        if code in _AXIS_ATTR_BY_CODE:
-            return self._axis_attribute(axis, axis_letter, code, value_str)
+            if arg == "":
+                return self._value(axis.target_position, f"Target {axis_name} position is")
+            axis.offset_target_position(self._parse_int(arg))
+            return self._ok()
 
-        raise ProtocolError(1, f"Unknown axis command code '{code}'")
-
-    def _axis_position(self, axis, axis_letter: str, value_str: str) -> str:
-        if value_str == "":
-            return self._query(axis_letter, axis.position)
-        value = self._parse_int(value_str)
-        axis.set_target_position(value)
-        return self._ack(f"{axis_letter} POSITION -> {value}")
-
-    def _axis_offset(self, axis, axis_letter: str, value_str: str) -> str:
-        if value_str == "":
-            return self._query(axis_letter, 0)
-        value = self._parse_int(value_str)
-        axis.offset_target_position(value)
-        return self._ack(f"{axis_letter} OFFSET {value}")
-
-    def _axis_attribute(self, axis, axis_letter: str, code: str, value_str: str) -> str:
-        attr = _AXIS_ATTR_BY_CODE[code]
-        if value_str == "":
-            return self._query(axis_letter, getattr(axis, attr))
-        value = self._parse_int(value_str)
-        setattr(axis, attr, value)
-        return self._ack(f"{axis_letter}{code} -> {value}")
-
-    # ------------------------------------------------------------------
-    def _execute_global_command(self, token: str) -> str:
-        if token in _GLOBAL_TWO_CHAR:
-            return self._global_two_char(token)
-
-        code = token[0]
-        value_str = token[1:]
-
-        if code == "H":
-            self.device.halt_all()
-            return self._ack("HALT ALL")
-        if code == "A":
-            return self._await_completion()
-        if code == "I":
-            self.device.slaved_execution = False
-            return self._ack("EXEC MODE -> IMMEDIATE")
         if code == "S":
-            self.device.slaved_execution = True
-            return self._ack("EXEC MODE -> SLAVED")
-        if code == "R":
-            self.device.reset()
-            return "!T!T!P!P*\r\n"
-        if code == "V":
-            return f"* {self.device.firmware_version}\r\n"
-        if code in ("C", "F", "E", "L", "D") and value_str == "":
-            return self._global_query(code)
+            if arg == "":
+                return self._value(axis.desired_speed, f"Target {axis_name} speed is")
+            axis.set_desired_speed(self._parse_int(arg))
+            return self._ok()
 
-        raise ProtocolError(1, f"Unknown command '{token}'")
-
-    def _global_two_char(self, token: str) -> str:
-        if token == "CI":
-            self.device.control_mode = ControlMode.POSITION
-            return self._ack("CONTROL MODE -> POSITION")
-        if token == "CV":
-            self.device.control_mode = ControlMode.VELOCITY
-            return self._ack("CONTROL MODE -> VELOCITY")
-        if token == "FT":
-            self.device.verbose_feedback = False
-            return self._ack("FEEDBACK -> TERSE")
-        if token == "FV":
-            self.device.verbose_feedback = True
-            return self._ack("FEEDBACK -> VERBOSE")
-        if token == "ED":
-            self.device.echo_enabled = False
-            return self._ack("ECHO -> DISABLED")
-        if token == "EE":
-            self.device.echo_enabled = True
-            return self._ack("ECHO -> ENABLED")
-        if token == "LE":
-            self.device.pan.limits_enabled = True
-            self.device.tilt.limits_enabled = True
-            return self._ack("LIMITS -> ENABLED")
-        if token == "LD":
-            self.device.pan.limits_enabled = False
-            self.device.tilt.limits_enabled = False
-            return self._ack("LIMITS -> DISABLED")
-        if token == "DF":
-            self.device.reset()
-            return self._ack("FACTORY DEFAULTS RESTORED")
-        if token == "DS":
-            self._saved_defaults = self._capture_settings()
-            return self._ack("SETTINGS SAVED")
-        if token == "DR":
-            if self._saved_defaults is not None:
-                self._restore_settings(self._saved_defaults)
-            return self._ack("SETTINGS RESTORED")
-        raise ProtocolError(1, f"Unknown command '{token}'")
-
-    def _global_query(self, code: str) -> str:
-        if code == "C":
-            return f"* {self.device.control_mode.value}\r\n"
-        if code == "F":
-            return f"* {'verbose' if self.device.verbose_feedback else 'terse'}\r\n"
-        if code == "E":
-            return f"* {'enabled' if self.device.echo_enabled else 'disabled'}\r\n"
-        if code == "L":
-            state = self.device.pan.limits_enabled and self.device.tilt.limits_enabled
-            return f"* {'enabled' if state else 'disabled'}\r\n"
         if code == "D":
-            return self._ack("no default action")
-        raise ProtocolError(1, f"Unknown query '{code}'")
+            if arg == "":
+                return self._value(round(axis.current_speed), f"Current {axis_name} speed is")
+            axis.offset_desired_speed(self._parse_int(arg))
+            return self._ok()
 
-    def _await_completion(self, timeout: float = 30.0) -> str:
+        if code == "A":
+            if arg == "":
+                return self._value(axis.acceleration, f"{axis_name} acceleration is")
+            axis.acceleration = self._parse_positive_int(arg)
+            return self._ok()
+
+        if code == "B":
+            if arg == "":
+                return self._value(axis.base_speed, f"{axis_name} base speed is")
+            axis.base_speed = self._parse_positive_int(arg)
+            return self._ok()
+
+        if code == "U":
+            if arg == "":
+                return self._value(axis.upper_speed_limit, f"Maximum {axis_name} speed is")
+            axis.upper_speed_limit = self._parse_positive_int(arg)
+            return self._ok()
+
+        if code == "L":
+            if arg == "":
+                return self._value(axis.lower_speed_limit, f"Minimum {axis_name} speed is")
+            axis.lower_speed_limit = self._parse_positive_int(arg)
+            return self._ok()
+
+        if code == "N":
+            return self._position_limit(axis, axis_name, arg, is_max=False)
+
+        if code == "X":
+            return self._position_limit(axis, axis_name, arg, is_max=True)
+
+        if code == "R":
+            if arg != "":
+                raise ProtocolError("Resolution is read-only")
+            return self._value(
+                round(axis.arcsec_per_count, 4), f"{axis_name} resolution per position is"
+            )
+
+        if code == "M":
+            if arg == "":
+                return self._text(axis.move_power.value, f"{axis_name} move power is")
+            axis.move_power = self._lookup(_MOVE_POWER_BY_LETTER, arg, "move power")
+            return self._ok()
+
+        if code == "H":
+            if arg == "":
+                return self._text(axis.hold_power.value, f"{axis_name} hold power is")
+            axis.hold_power = self._lookup(_HOLD_POWER_BY_LETTER, arg, "hold power")
+            return self._ok()
+
+        raise ProtocolError(f"Unknown command '{token}'")
+
+    def _position_limit(self, axis, axis_name: str, arg: str, is_max: bool) -> str:
+        bound = "Maximum" if is_max else "Minimum"
+        if arg == "":
+            value = axis.effective_max if is_max else axis.effective_min
+            return self._value(value, f"{bound} {axis_name} position is")
+        if arg[0] != "U":
+            raise ProtocolError(f"{bound} {axis_name} limit is set with the U (user) suffix")
+        user_arg = arg[1:]
+        if user_arg == "":
+            value = axis.user_max if is_max else axis.user_min
+            return self._value(value, f"{bound} user {axis_name} position is")
+        counts = self._parse_int(user_arg)
+        if is_max:
+            axis.set_user_max(counts)
+        else:
+            axis.set_user_min(counts)
+        return self._ok()
+
+    # -- comandos globais --------------------------------------------------
+    def _execute_global_command(self, token: str) -> str:
+        if token.startswith("@"):
+            return self._set_host_port(token)
+        if token.startswith("B"):
+            return self._combined_move(token)
+        if token.startswith("W"):
+            return self._step_mode(token)
+
+        code, arg = token[0], token[1:]
+
+        if code == "H":
+            return self._halt(arg)
+        if code == "R":
+            return self._reset(arg)
+        if code == "C":
+            return self._control_mode(arg)
+        if code == "F":
+            return self._feedback_mode(arg)
+        if code == "E":
+            return self._echo_mode(arg)
+        if code == "L":
+            return self._limit_mode(arg)
+        if code == "D":
+            return self._defaults(arg)
+        if code == "M":
+            return self._monitor(arg)
+        if code == "I" and arg == "":
+            self.device.slaved_execution = False
+            self.device.apply_pending_targets()
+            return self._ok()
+        if code == "S" and arg == "":
+            self.device.slaved_execution = True
+            return self._ok()
+        if code == "V" and arg == "":
+            return self._text(self.device.firmware_version, "Version:")
+
+        raise ProtocolError(f"Unknown command '{token}'")
+
+    def _halt(self, arg: str) -> str:
+        if arg == "":
+            self.device.halt_all()
+        elif arg == "P":
+            self.device.pan.halt()
+        elif arg == "T":
+            self.device.tilt.halt()
+        else:
+            raise ProtocolError(f"Unknown halt command 'H{arg}'")
+        return self._ok()
+
+    def _reset(self, arg: str) -> str:
+        if arg in ("", "E"):
+            self.device.reset(pan=True, tilt=True)
+        elif arg == "P":
+            self.device.reset(pan=True, tilt=False)
+        elif arg == "T":
+            self.device.reset(pan=False, tilt=True)
+        else:
+            raise ProtocolError(f"Unknown reset command 'R{arg}'")
+        # Resposta fixa confirmada no driver de referência para o reset.
+        return "!T!T!P!P*\r\n"
+
+    def _control_mode(self, arg: str) -> str:
+        if arg == "":
+            return self._text(self.device.control_mode.value, "Control mode is")
+        if arg == "I":
+            self.device.control_mode = ControlMode.POSITION
+        elif arg == "V":
+            self.device.control_mode = ControlMode.VELOCITY
+        else:
+            raise ProtocolError(f"Unknown control mode 'C{arg}'")
+        return self._ok()
+
+    def _feedback_mode(self, arg: str) -> str:
+        if arg == "":
+            return self._text("verbose" if self.device.verbose_feedback else "terse", "Feedback mode is")
+        if arg == "T":
+            self.device.verbose_feedback = False
+        elif arg == "V":
+            self.device.verbose_feedback = True
+        else:
+            raise ProtocolError(f"Unknown feedback mode 'F{arg}'")
+        return self._ok()
+
+    def _echo_mode(self, arg: str) -> str:
+        if arg == "":
+            return self._text("enabled" if self.device.echo_enabled else "disabled", "Echo is")
+        if arg == "E":
+            self.device.echo_enabled = True
+        elif arg == "D":
+            self.device.echo_enabled = False
+        else:
+            raise ProtocolError(f"Unknown echo command 'E{arg}'")
+        return self._ok()
+
+    def _limit_mode(self, arg: str) -> str:
+        if arg == "":
+            return self._text(self.device.limit_mode.value, "Limit mode is")
+        modes = {"E": LimitMode.FACTORY, "U": LimitMode.USER, "D": LimitMode.DISABLED}
+        if arg not in modes:
+            raise ProtocolError(f"Unknown limit command 'L{arg}'")
+        self.device.set_limit_mode(modes[arg])
+        return self._ok()
+
+    def _defaults(self, arg: str) -> str:
+        if arg == "F":
+            self.device.reset()
+        elif arg == "S":
+            self._saved = self._capture_settings()
+        elif arg == "R":
+            if self._saved is not None:
+                self._restore_settings(self._saved)
+        else:
+            raise ProtocolError(f"Unknown defaults command 'D{arg}'")
+        return self._ok()
+
+    def _monitor(self, arg: str) -> str:
+        if arg == "":
+            return self._text("enabled" if self.device.monitor.enabled else "disabled", "Monitor mode is")
+        if arg == "E":
+            self.device.monitor.enabled = True
+        elif arg == "D":
+            self.device.monitor.enabled = False
+            for axis in self.device.axes:
+                axis.halt()
+        else:
+            raise ProtocolError(f"Unknown monitor command 'M{arg}'")
+        return self._ok()
+
+    def _step_mode(self, token: str) -> str:
+        rest = token[1:]
+        if not rest or rest[0] not in ("P", "T"):
+            raise ProtocolError(f"Unknown command '{token}'")
+        axis = self.device.pan if rest[0] == "P" else self.device.tilt
+        axis_name = "Pan" if rest[0] == "P" else "Tilt"
+        arg = rest[1:]
+        if arg == "":
+            return self._text(axis.step_mode.value, f"{axis_name} step mode is")
+        axis.set_step_mode(self._lookup(_STEP_MODE_BY_LETTER, arg, "step mode"))
+        return self._ok()
+
+    def _combined_move(self, token: str) -> str:
+        """Comando ``B<pan>,<tilt>,<vel_pan>,<vel_tilt>``: move os dois eixos juntos."""
+        parts = token[1:].split(",")
+        if len(parts) != 4:
+            raise ProtocolError("Command B expects <pan>,<tilt>,<pan speed>,<tilt speed>")
+        pan_pos, tilt_pos, pan_speed, tilt_speed = (self._parse_int(p) for p in parts)
+        self.device.pan.set_desired_speed(abs(pan_speed))
+        self.device.tilt.set_desired_speed(abs(tilt_speed))
+        self.device.pan.set_target_position(pan_pos)
+        self.device.tilt.set_target_position(tilt_pos)
+        return self._ok()
+
+    def _set_host_port(self, token: str) -> str:
+        """Comando ``@(baud,0,F)``: configura a porta serial do host."""
+        match = _BAUD_RE.match(token)
+        if not match:
+            raise ProtocolError("Expected @(<baud>,0,F)")
+        self.device.host_baudrate = int(match.group(1))
+        return self._ok()
+
+    def _await_completion(self) -> str:
+        self.device.apply_pending_targets()
         start = time.monotonic()
         while self.device.is_in_motion():
-            if time.monotonic() - start > timeout:
-                break
-            time.sleep(0.02)
-        return self._ack("MOTION COMPLETE")
+            if time.monotonic() - start > self.await_timeout:
+                return "! Await timed out\r\n"
+            time.sleep(0.01)
+        return self._ok()
 
-    # ------------------------------------------------------------------
+    # -- save/restore de configurações --------------------------------------
     def _capture_settings(self) -> dict:
-        def axis_settings(axis):
+        with self.device.lock:
             return {
-                "desired_speed": axis.desired_speed,
-                "base_speed": axis.base_speed,
-                "acceleration": axis.acceleration,
-                "upper_speed_limit": axis.upper_speed_limit,
-                "lower_speed_limit": axis.lower_speed_limit,
-                "min_limit": axis.min_limit,
-                "max_limit": axis.max_limit,
-                "limits_enabled": axis.limits_enabled,
+                axis.spec.name: {
+                    "desired_speed": axis.desired_speed,
+                    "base_speed": axis.base_speed,
+                    "acceleration": axis.acceleration,
+                    "upper_speed_limit": axis.upper_speed_limit,
+                    "lower_speed_limit": axis.lower_speed_limit,
+                    "limit_mode": axis.limit_mode,
+                    "step_mode": axis.step_mode,
+                    "hold_power": axis.hold_power,
+                    "move_power": axis.move_power,
+                }
+                for axis in self.device.axes
             }
 
-        return {"pan": axis_settings(self.device.pan), "tilt": axis_settings(self.device.tilt)}
-
     def _restore_settings(self, saved: dict) -> None:
-        for axis_name, axis in (("pan", self.device.pan), ("tilt", self.device.tilt)):
-            for key, value in saved[axis_name].items():
-                setattr(axis, key, value)
+        with self.device.lock:
+            for axis in self.device.axes:
+                for key, value in saved[axis.spec.name].items():
+                    if key == "step_mode":
+                        axis.set_step_mode(value)
+                    else:
+                        setattr(axis, key, value)
 
-    # ------------------------------------------------------------------
-    def _parse_int(self, value_str: str) -> int:
-        try:
-            return int(value_str)
-        except ValueError:
-            raise ProtocolError(2, f"Invalid integer value '{value_str}'")
-
-    def _ack(self, description: str) -> str:
-        if self.device.verbose_feedback:
-            return f"* OK {description}\r\n"
+    # -- formatação de respostas ---------------------------------------------
+    def _ok(self) -> str:
         return "*\r\n"
 
-    def _query(self, axis_letter: str, value) -> str:
+    def _value(self, value, phrase: str) -> str:
         if self.device.verbose_feedback:
-            return f"* {axis_letter} = {value}\r\n"
-        return f"*{axis_letter.lower()}{value}\r\n"
+            return f"* {phrase} {value}\r\n"
+        return f"* {value}\r\n"
+
+    def _text(self, value: str, phrase: str) -> str:
+        if self.device.verbose_feedback:
+            return f"* {phrase} {value}\r\n"
+        return f"* {value}\r\n"
+
+    # -- utilitários ----------------------------------------------------------
+    def _parse_int(self, text: str) -> int:
+        try:
+            return int(text)
+        except ValueError:
+            raise ProtocolError(f"Invalid integer value '{text}'")
+
+    def _parse_positive_int(self, text: str) -> int:
+        value = self._parse_int(text)
+        if value < 0:
+            raise ProtocolError(f"Value must not be negative: '{text}'")
+        return value
+
+    def _lookup(self, table: dict, letter: str, what: str):
+        if letter not in table:
+            valid = "/".join(sorted(table))
+            raise ProtocolError(f"Unknown {what} '{letter}' (expected {valid})")
+        return table[letter]
