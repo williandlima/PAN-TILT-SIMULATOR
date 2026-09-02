@@ -51,6 +51,16 @@ pip install -e ".[gui]"            # ou: pip install -r requirements.txt
 
 Sem a GUI (BeagleBone headless), `pip install -e .` basta — só o pyserial.
 
+> **Passo a passo completo de instalação, teste e utilização** (incluindo
+> Windows, BeagleBone, teste sem hardware e resolução de problemas):
+> [`docs/PROCEDIMENTO.md`](docs/PROCEDIMENTO.md).
+
+Verificação rápida de que está tudo funcionando, sem precisar de hardware:
+
+```bash
+python3 tools/autoteste.py     # 9 verificações ponta a ponta, imprime PASSOU/FALHOU
+```
+
 ## Uso
 
 ```bash

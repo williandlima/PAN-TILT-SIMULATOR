@@ -38,9 +38,18 @@ def _list_ports() -> int:
 
 
 def _run_gui(device) -> int:
-    from PyQt5.QtWidgets import QApplication
+    try:
+        from PyQt5.QtWidgets import QApplication
 
-    from .gui.main_window import MainWindow
+        from .gui.main_window import MainWindow
+    except ImportError:
+        print(
+            "A interface gráfica precisa do PyQt5, que não está instalado.\n"
+            "  Instale com:  pip install \"pantiltsim[gui]\"   (ou: pip install PyQt5)\n"
+            "  Sem monitor?  use o modo headless:  ptu-sim --headless --port <porta>",
+            file=sys.stderr,
+        )
+        return 2
 
     app = QApplication(sys.argv)
     window = MainWindow(device=device)
