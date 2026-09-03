@@ -29,7 +29,7 @@ Decida antes qual modo você vai usar, porque muda o que instalar:
 ### 2.1 Linux e BeagleBone
 
 ```bash
-git clone <url-do-repositorio> PAN-TILT-SIMULATOR
+git clone https://github.com/williandlima/PAN-TILT-SIMULATOR.git
 cd PAN-TILT-SIMULATOR
 
 python3 -m venv .venv
@@ -40,16 +40,34 @@ pip install -e ".[gui]"     # com interface gráfica
 pip install -e .            # só o núcleo (pyserial)
 ```
 
-### 2.2 Windows
+Se você já tem o repositório baixado, pule o `git clone` e comece pelo `cd`.
 
-```bat
-git clone <url-do-repositorio> PAN-TILT-SIMULATOR
+### 2.2 Windows (PowerShell)
+
+> **Cole uma linha por vez.** O PowerShell junta um bloco colado inteiro em um
+> único comando: se a primeira linha falhar, **nenhuma** das seguintes roda —
+> e você fica achando que instalou quando nada aconteceu.
+
+```powershell
+git clone https://github.com/williandlima/PAN-TILT-SIMULATOR.git
 cd PAN-TILT-SIMULATOR
-
 python -m venv .venv
-.venv\Scripts\activate
-
+.\.venv\Scripts\Activate.ps1
 pip install -e ".[gui]"
+```
+
+Se você já tem o repositório baixado, pule o `git clone` e comece pelo `cd`.
+
+Use a forma `.\.venv\Scripts\Activate.ps1` (com o `.\` na frente): é o script de
+ativação do PowerShell. O `activate` sem extensão é a versão de Linux e o
+`activate.bat` é a do `cmd.exe` — nenhum dos dois ativa corretamente uma sessão
+do PowerShell.
+
+Se o `Activate.ps1` falhar com *"a execução de scripts foi desabilitada neste
+sistema"*, libere só para esta janela e ative de novo:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 ```
 
 ### 2.3 Permissão de acesso à porta serial (Linux)
@@ -339,6 +357,9 @@ equipamento antes de usar o simulador para validar tempos e cursos.
 
 | Sintoma | Causa provável | O que fazer |
 |---------|----------------|-------------|
+| PowerShell: `Operador '<' reservado para uso futuro` | Um marcador `<...>` foi digitado literalmente; `<` é operador reservado | Substitua o marcador pelo valor real. As instruções da seção 2.2 já usam a URL de verdade |
+| PowerShell: colei o bloco e "nada aconteceu" | O bloco colado vira um comando só; se a linha 1 falha, nenhuma outra roda | Cole **uma linha por vez** e confira o resultado de cada uma |
+| PowerShell: *"a execução de scripts foi desabilitada neste sistema"* | Política de execução bloqueia o `Activate.ps1` | `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` e ative de novo |
 | `ptu-sim: command not found` | Ambiente virtual não ativado | `source .venv/bin/activate` ou use `python3 -m pantiltsim.main` |
 | `A interface gráfica precisa do PyQt5` | Instalado só o núcleo | `pip install "pantiltsim[gui]"`, ou use `--headless` |
 | `Permission denied` ao abrir a porta | Usuário fora do grupo `dialout` | `sudo usermod -a -G dialout $USER` e reabra a sessão |
