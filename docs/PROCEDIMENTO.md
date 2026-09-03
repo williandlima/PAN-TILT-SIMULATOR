@@ -360,6 +360,8 @@ equipamento antes de usar o simulador para validar tempos e cursos.
 | PowerShell: `Operador '<' reservado para uso futuro` | Um marcador `<...>` foi digitado literalmente; `<` é operador reservado | Substitua o marcador pelo valor real. As instruções da seção 2.2 já usam a URL de verdade |
 | PowerShell: colei o bloco e "nada aconteceu" | O bloco colado vira um comando só; se a linha 1 falha, nenhuma outra roda | Cole **uma linha por vez** e confira o resultado de cada uma |
 | PowerShell: *"a execução de scripts foi desabilitada neste sistema"* | Política de execução bloqueia o `Activate.ps1` | `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` e ative de novo |
+| PowerShell: `O termo '/c:/…/python.exe' não é reconhecido` | Caminho em formato Unix; no Windows é `C:\…` com barras invertidas | Com o venv ativo (prefixo `(.venv)` no prompt) **não use caminho nenhum**: rode só `pip install -e ".[gui]"` |
+| Apareceu uma pasta `.venv-1` além da `.venv` | Um segundo ambiente foi criado com a `.venv` já existente (típico do *Python: Create Environment* do VS Code) | Fique com um só. Veja qual está ativo com `python -c "import sys; print(sys.executable)"` e apague o outro |
 | `ptu-sim: command not found` | Ambiente virtual não ativado | `source .venv/bin/activate` ou use `python3 -m pantiltsim.main` |
 | `A interface gráfica precisa do PyQt5` | Instalado só o núcleo | `pip install "pantiltsim[gui]"`, ou use `--headless` |
 | `Permission denied` ao abrir a porta | Usuário fora do grupo `dialout` | `sudo usermod -a -G dialout $USER` e reabra a sessão |
