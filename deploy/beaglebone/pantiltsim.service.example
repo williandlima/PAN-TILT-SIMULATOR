@@ -1,0 +1,36 @@
+# Modelo de serviço systemd para iniciar o simulador automaticamente no
+# boot da BeagleBone. NÃO é instalado nem ativado pelo install.sh —
+# é opcional, porque tomar a porta serial no boot pode não ser o que
+# você quer enquanto ainda está testando manualmente.
+#
+# Para ativar:
+#   1. Edite ExecStart abaixo: troque <VENV> pelo caminho do ambiente
+#      virtual (o instalador imprime esse caminho; o padrão é
+#      /home/<usuario>/.pantiltsim-venv) e ajuste --port/--baud/--rs485
+#      conforme a sua fiação.
+#   2. sudo cp pantiltsim.service.example /etc/systemd/system/pantiltsim.service
+#   3. sudo systemctl daemon-reload
+#   4. sudo systemctl enable --now pantiltsim.service
+#
+# Para acompanhar o log:
+#   journalctl -u pantiltsim.service -f
+#
+# Para desativar:
+#   sudo systemctl disable --now pantiltsim.service
+
+[Unit]
+Description=Simulador PTU-D300E (pantiltsim)
+After=network.target dev-ttyUSB0.device
+# Troque dev-ttyUSB0.device pelo dispositivo real se usar outra porta
+# (ex.: dev-ttyGS0.device para o modo USB gadget, dev-ttyS4.device para
+# UART nativa) — assim o systemd espera a porta existir antes de iniciar.
+
+[Service]
+Type=simple
+ExecStart=<VENV>/bin/ptu-sim --headless --port /dev/ttyUSB0 --baud 9600 --rs485
+Restart=on-failure
+RestartSec=2
+User=<USUARIO>
+
+[Install]
+WantedBy=multi-user.target

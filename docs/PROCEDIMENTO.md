@@ -42,6 +42,14 @@ pip install -e .            # só o núcleo (pyserial)
 
 Se você já tem o repositório baixado, pule o `git clone` e comece pelo `cd`.
 
+> **BeagleBone sem acesso à internet no local?** Use o instalador offline
+> em [`deploy/beaglebone/`](../deploy/beaglebone/): as dependências já
+> vêm baixadas dentro do repositório, então basta copiar a pasta inteira
+> para um pendrive, levar até a BeagleBone e rodar um script — nenhum
+> acesso à rede é necessário na hora da instalação. Veja
+> [`deploy/beaglebone/README.md`](../deploy/beaglebone/README.md) para o
+> passo a passo completo.
+
 ### 2.2 Windows (PowerShell)
 
 > **Cole uma linha por vez.** O PowerShell junta um bloco colado inteiro em um

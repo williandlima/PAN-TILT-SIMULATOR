@@ -51,9 +51,14 @@ pip install -e ".[gui]"            # ou: pip install -r requirements.txt
 
 Sem a GUI (BeagleBone headless), `pip install -e .` basta — só o pyserial.
 
+**BeagleBone sem internet no local?** [`deploy/beaglebone/`](deploy/beaglebone/)
+traz um instalador offline: as dependências já vêm baixadas no
+repositório, então é só copiar a pasta inteira num pendrive e rodar um
+script na placa — nenhum acesso à rede necessário na hora.
+
 > **Passo a passo completo de instalação, teste e utilização** (incluindo
-> Windows, BeagleBone, teste sem hardware e resolução de problemas):
-> [`docs/PROCEDIMENTO.md`](docs/PROCEDIMENTO.md).
+> Windows, BeagleBone, instalação offline, teste sem hardware e
+> resolução de problemas): [`docs/PROCEDIMENTO.md`](docs/PROCEDIMENTO.md).
 
 Verificação rápida de que está tudo funcionando, sem precisar de hardware:
 
