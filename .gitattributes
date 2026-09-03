@@ -1,0 +1,14 @@
+# Scripts que rodam em Linux/BeagleBone precisam de quebra de linha LF,
+# não importa em que sistema operacional foram clonados/baixados. Sem
+# isso, o Git para Windows costuma converter para CRLF no checkout, e o
+# script para de rodar na BeagleBone com um erro enganoso ("No such file
+# or directory" no lugar de "bad interpreter") porque o shebono
+# (#!/usr/bin/env bash) fica com um \r sobrando.
+*.sh text eol=lf
+*.service* text eol=lf
+*.py text eol=lf
+
+# Binários: nunca mexer em quebra de linha.
+*.whl -text
+*.png -text
+*.jpg -text
