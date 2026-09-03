@@ -173,6 +173,12 @@ O que cada arquivo cobre:
 | `tests/test_protocol.py` | Cada comando e os formatos exatos de resposta |
 | `tests/test_end_to_end_serial.py` | Transporte + protocolo + movimento **por uma porta serial real** |
 
+**No Windows o resultado é `37 passed, 7 skipped`**, e está correto: os 7 testes
+ponta a ponta usam PTYs, que só existem em Linux/macOS, então são pulados. Para
+cobrir esse caminho no Windows, use o par de portas virtuais do com0com
+(seção 3.4). Pelo mesmo motivo, o autoteste da seção 3.1 não roda no Windows —
+lá a verificação visual equivalente é o roteiro da seção 3.3.
+
 ### 3.3 Teste manual da interface gráfica
 
 ```bash
