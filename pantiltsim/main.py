@@ -57,9 +57,43 @@ def _run_gui(device) -> int:
     return app.exec_()
 
 
+_EPILOGO = """
+modos de teste:
+  local        Abra a interface e comande por ela; nenhuma porta é necessária.
+                 ptu-sim --gui
+  loopback     Duas portas virtuais: o simulador em uma ponta, seu software na
+               outra. Linux: socat; Windows: com0com.
+                 socat -d -d pty,raw,echo=0,link=/tmp/ptu-sim \\
+                            pty,raw,echo=0,link=/tmp/ptu-cliente
+                 ptu-sim --headless --port /tmp/ptu-sim
+                 python3 tools/ptu_client.py --port /tmp/ptu-cliente --demo
+  fiação real  Um conversor de cada lado do barramento (9600 8N1 por padrão).
+                 ptu-sim --headless --port /dev/ttyUSB0 --rs485
+  autoteste    Aceitação ponta a ponta, sem hardware (Linux/macOS).
+                 python3 tools/autoteste.py
+  suíte        pip install -e ".[dev]" && pytest
+               Linux: 44 passam. Windows: 37 passam e 7 são pulados (usam PTY).
+
+o núcleo, em uma frase:
+  O protocolo do fabricante trabalha em CONTAGENS, não em graus. Pergunte a
+  resolução com PR/TR e calcule contagens_por_grau = 3600 / resolução; nunca
+  fixe a conversão no código, porque ela muda com o micropasso e o modelo.
+
+ajuda dentro do programa:
+  Na interface: menu Ajuda, ou F1 (primeiros passos), F2 (modos de teste) e
+  F3 (comandos DPCL). No terminal DPCL, digite ? para o resumo dos comandos.
+
+documentação:
+  docs/PROCEDIMENTO.md  instalação, teste e utilização, passo a passo
+  docs/PROTOCOL.md      protocolo completo e o que foi confirmado em hardware
+"""
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Simulador do Pan-Tilt PTU-D300E (RS-485/USB) para Linux/BeagleBone e Windows."
+        description="Simulador do Pan-Tilt PTU-D300E (RS-485/USB) para Linux/BeagleBone e Windows.",
+        epilog=_EPILOGO,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--gui", action="store_true", help="abre a interface gráfica PyQt5 [padrão]")

@@ -89,6 +89,18 @@ Tudo o que a interface faz passa pelo mesmo interpretador do protocolo
 usado pela porta serial — mover pela GUI exercita o mesmo caminho de
 código que um controlador externo exercitaria.
 
+### Ajuda dentro do programa
+
+- **Menu Ajuda** (ou `F1`) — primeiros passos, o núcleo do projeto, guia da
+  interface, modos de teste e referência de comandos. Os números mostrados
+  (resolução, contagens por grau, curso) são os da configuração carregada,
+  então continuam corretos com `--config`.
+- `F2` abre direto os **modos de teste**; `F3`, os **comandos DPCL**.
+- No **Terminal DPCL**, digite `?` para o resumo dos comandos com a
+  conversão graus↔contagens vigente, ou `??` para a janela completa.
+- `ptu-sim --help` traz os modos de teste e o essencial do protocolo no
+  próprio terminal.
+
 ## Cliente de exemplo
 
 `tools/ptu_client.py` é um controlador mínimo que serve tanto para testar

@@ -12,7 +12,9 @@ from __future__ import annotations
 import logging
 
 from PyQt5.QtCore import QObject, Qt, QTimer, pyqtSignal
+from PyQt5.QtGui import QKeySequence
 from PyQt5.QtWidgets import (
+    QAction,
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
@@ -32,9 +34,11 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
+from .. import __version__
 from ..device import PanTiltDevice
 from ..protocol import DPCLProtocol
 from ..transport_serial import SerialServer, SerialTransport, SerialTransportConfig
+from .help_dialog import HelpDialog, terminal_help_text
 from .pantilt_widget import PanTiltWidget
 
 log = logging.getLogger(__name__)
@@ -79,6 +83,7 @@ class MainWindow(QMainWindow):
         self._updating_widgets = False
 
         self._build_ui()
+        self._build_menu()
         self._refresh_ports()
         self.device.start()
 
@@ -110,6 +115,58 @@ class MainWindow(QMainWindow):
         container.setLayout(side)
         container.setMinimumWidth(430)
         root.addWidget(container, stretch=2)
+
+    # -- menus e ajuda ---------------------------------------------------
+    def _build_menu(self) -> None:
+        bar = self.menuBar()
+
+        arquivo = bar.addMenu("&Arquivo")
+        sair = QAction("Sair", self)
+        sair.setShortcut(QKeySequence.Quit)
+        sair.triggered.connect(self.close)
+        arquivo.addAction(sair)
+
+        ajuda = bar.addMenu("A&juda")
+        topicos = [
+            ("Primeiros passos", "Primeiros passos", QKeySequence("F1")),
+            ("O núcleo do projeto", "O núcleo do projeto", None),
+            ("A interface", "A interface", None),
+            ("Modos de teste", "Modos de teste", QKeySequence("F2")),
+            ("Comandos DPCL", "Comandos DPCL", QKeySequence("F3")),
+        ]
+        for rotulo, topico, atalho in topicos:
+            action = QAction(rotulo, self)
+            if atalho is not None:
+                action.setShortcut(atalho)
+            action.triggered.connect(lambda _, t=topico: self._show_help(t))
+            ajuda.addAction(action)
+
+        ajuda.addSeparator()
+        sobre = QAction("Sobre o simulador", self)
+        sobre.triggered.connect(self._show_about)
+        ajuda.addAction(sobre)
+
+        self.statusBar().showMessage(
+            "F1 ajuda · F2 modos de teste · F3 comandos DPCL · digite ? no terminal DPCL"
+        )
+
+    def _show_help(self, topic: str = "Primeiros passos") -> None:
+        dialog = HelpDialog(self.device, parent=self, topic=HelpDialog.topic_index(topic))
+        dialog.exec_()
+
+    def _show_about(self) -> None:
+        snap = self.device.snapshot()
+        QMessageBox.about(
+            self,
+            "Sobre o simulador",
+            f"<b>Simulador {snap['model']}</b><br>"
+            f"pantiltsim {__version__}<br><br>"
+            "Simulador de pan-tilt que fala o protocolo ASCII do fabricante "
+            "(DPCL) por RS-485 ou USB.<br><br>"
+            f"Resolução atual: {snap['pan_resolution_arcsec']:.4f} ″/contagem (pan)<br>"
+            f"Curso pan: {snap['pan_range_deg'][0]:.1f}° a {snap['pan_range_deg'][1]:.1f}°<br>"
+            f"Curso tilt: {snap['tilt_range_deg'][0]:.1f}° a {snap['tilt_range_deg'][1]:.1f}°",
+        )
 
     # -- conexão ---------------------------------------------------------
     def _build_connection_group(self) -> QGroupBox:
@@ -315,19 +372,25 @@ class MainWindow(QMainWindow):
 
         hint = QLabel(
             "Digite comandos ASCII do fabricante (ex.: <code>PP1000</code>, <code>TS500</code>, "
-            "<code>PR</code>, <code>PP</code>). Vários comandos podem ir na mesma linha."
+            "<code>PR</code>). Vários comandos podem ir na mesma linha.<br>"
+            "Digite <b>?</b> para o resumo dos comandos, ou <b>??</b> para a ajuda completa."
         )
         hint.setWordWrap(True)
         layout.addWidget(hint)
 
         row = QHBoxLayout()
         self.command_input = QLineEdit()
-        self.command_input.setPlaceholderText("PP1000 TP-500")
+        self.command_input.setPlaceholderText("PP1000 TP-500   (ou ? para ajuda)")
         self.command_input.returnPressed.connect(self._send_typed_command)
         send_btn = QPushButton("Enviar")
         send_btn.clicked.connect(self._send_typed_command)
+        help_btn = QPushButton("?")
+        help_btn.setMaximumWidth(34)
+        help_btn.setToolTip("Resumo dos comandos DPCL")
+        help_btn.clicked.connect(self._print_terminal_help)
         row.addWidget(self.command_input, stretch=1)
         row.addWidget(send_btn)
+        row.addWidget(help_btn)
         layout.addLayout(row)
 
         self.log_view = QPlainTextEdit()
@@ -433,9 +496,23 @@ class MainWindow(QMainWindow):
 
     def _send_typed_command(self) -> None:
         text = self.command_input.text().strip()
-        if text:
-            self._send_local(text)
-            self.command_input.clear()
+        if not text:
+            return
+        self.command_input.clear()
+
+        # '?' e '??' são atalhos da interface, não comandos do equipamento:
+        # tratados aqui para não irem parar no protocolo como erro.
+        if text == "?":
+            self._print_terminal_help()
+            return
+        if text == "??":
+            self._show_help("Comandos DPCL")
+            return
+
+        self._send_local(text)
+
+    def _print_terminal_help(self) -> None:
+        self._append_log(terminal_help_text(self.device))
 
     # ------------------------------------------------------------------
     def _on_command(self, token: str, response: str) -> None:
