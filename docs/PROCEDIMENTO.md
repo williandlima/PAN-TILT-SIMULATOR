@@ -185,6 +185,18 @@ lá a verificação visual equivalente é o roteiro da seção 3.3.
 ptu-sim --gui
 ```
 
+> **No VS Code, não use o botão ▶️ "Run Python File".** Esse botão executa o
+> arquivo aberto diretamente (`python arquivo.py`); este projeto usa import
+> relativo entre módulos (`pantiltsim/main.py` importa com `from . import`),
+> que só funciona rodando como pacote — com `-m` ou com o `ptu-sim`
+> instalado. Rodar o arquivo direto dá erro de import relativo.
+>
+> O repositório já traz `.vscode/launch.json` com o jeito certo: abra o
+> painel **Run and Debug** (`Ctrl+Shift+D`) e escolha **Simulador PTU-D300E
+> (GUI)** na lista, ou tecle `F5`. Isso roda `python -m pantiltsim.main
+> --gui` de verdade, com o interpretador do `.venv`. Há também uma opção
+> **(headless)** — pede a porta serial — e **Autoteste (sem hardware)**.
+
 Roteiro de verificação:
 
 1. **Aba Controle** → digite `45` em *Pan alvo*, `20` em *Tilt alvo*, clique
@@ -369,6 +381,7 @@ equipamento antes de usar o simulador para validar tempos e cursos.
 | PowerShell: `O termo '/c:/…/python.exe' não é reconhecido` | Caminho em formato Unix; no Windows é `C:\…` com barras invertidas | Com o venv ativo (prefixo `(.venv)` no prompt) **não use caminho nenhum**: rode só `pip install -e ".[gui]"` |
 | Apareceu uma pasta `.venv-1` além da `.venv` | Um segundo ambiente foi criado com a `.venv` já existente (típico do *Python: Create Environment* do VS Code) | Fique com um só. Veja qual está ativo com `python -c "import sys; print(sys.executable)"` e apague o outro |
 | `ptu-sim: command not found` | Ambiente virtual não ativado | `source .venv/bin/activate` ou use `python3 -m pantiltsim.main` |
+| VS Code: botão ▶️ "Run Python File" não abre nada / erro de import relativo | O botão executa o arquivo aberto direto (`python arquivo.py`), e o projeto usa import relativo entre módulos | Use `F5` (Run and Debug) com a configuração **Simulador PTU-D300E (GUI)** já incluída em `.vscode/launch.json`, ou rode pelo terminal (`ptu-sim --gui`) |
 | `A interface gráfica precisa do PyQt5` | Instalado só o núcleo | `pip install "pantiltsim[gui]"`, ou use `--headless` |
 | `Permission denied` ao abrir a porta | Usuário fora do grupo `dialout` | `sudo usermod -a -G dialout $USER` e reabra a sessão |
 | Porta não aparece em `--list-ports` | Driver/cabo/UART não habilitada | Confira o cabo; na BeagleBone habilite a UART no device tree |

@@ -1,0 +1,38 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Simulador PTU-D300E (GUI)",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "pantiltsim.main",
+            "args": ["--gui"],
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
+            "name": "Simulador PTU-D300E (headless)",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "pantiltsim.main",
+            "args": ["--headless", "--port", "${input:portaSerial}", "--log-level", "debug"],
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
+            "name": "Autoteste (sem hardware)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/tools/autoteste.py",
+            "console": "integratedTerminal",
+            "justMyCode": true
+        }
+    ],
+    "inputs": [
+        {
+            "id": "portaSerial",
+            "type": "promptString",
+            "description": "Porta serial (ex.: COM4, /dev/ttyUSB0)"
+        }
+    ]
+}
