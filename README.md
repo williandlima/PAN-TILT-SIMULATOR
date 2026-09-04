@@ -40,6 +40,14 @@ demonstração visual do comportamento do equipamento.
    movimento trapezoidal, limites de curso realmente aplicados,
    micropasso alterando a resolução, `A` (await) segurando o enlace até o
    movimento terminar.
+7. **Rastreamento de antena por GPS** (`pantiltsim/tracking.py`,
+   comandos `GO`/`GX`/`GE`/`GD`/`GA`): aponta o pan-tilt automaticamente
+   para um alvo (aeronave, drone, foguete de sondagem) a partir da
+   posição GPS da estação de solo e do veículo, com geodesia WGS84
+   completa (geodésico → ECEF → ENU) — o mesmo método usado por estações
+   terrenas de rastreamento de satélite. Aba dedicada na GUI, com
+   trajetória de demonstração para ver o rastreamento em ação sem
+   hardware GPS real — ver [`docs/PROTOCOL.md`](docs/PROTOCOL.md).
 
 ## Instalação
 
@@ -87,6 +95,10 @@ Na GUI:
   monitor/auto-scan. Cada botão envia comandos DPCL de verdade.
 - **Configuração** — micropasso, limites, modos de controle, potência,
   eco, feedback, execução slaved, salvar/restaurar.
+- **Rastreamento GPS** — define a posição da estação de solo e do alvo
+  (ou gera uma trajetória de demonstração), habilita o apontamento
+  automático e mostra azimute/elevação/distância calculados em tempo
+  real.
 - **Terminal DPCL** — digite comandos crus (`PP1000`, `PR`, `PS`…) e veja
   a resposta, junto com todo o tráfego da porta serial.
 
@@ -97,10 +109,12 @@ código que um controlador externo exercitaria.
 ### Ajuda dentro do programa
 
 - **Menu Ajuda** (ou `F1`) — primeiros passos, o núcleo do projeto, guia da
-  interface, modos de teste e referência de comandos. Os números mostrados
-  (resolução, contagens por grau, curso) são os da configuração carregada,
-  então continuam corretos com `--config`.
-- `F2` abre direto os **modos de teste**; `F3`, os **comandos DPCL**.
+  interface, modos de teste, rastreamento de antena por GPS e referência
+  de comandos. Os números mostrados (resolução, contagens por grau,
+  curso) são os da configuração carregada, então continuam corretos com
+  `--config`.
+- `F2` abre direto os **modos de teste**; `F3`, os **comandos DPCL**; `F4`,
+  o **rastreamento de antena por GPS**.
 - No **Terminal DPCL**, digite `?` para o resumo dos comandos com a
   conversão graus↔contagens vigente, ou `??` para a janela completa.
 - `ptu-sim --help` traz os modos de teste e o essencial do protocolo no
@@ -159,13 +173,17 @@ pip install -e ".[dev]"
 pytest
 ```
 
-44 testes, em três níveis:
+68 testes, em quatro níveis:
 
 - `tests/test_device.py` — física do movimento, limites, micropasso,
   modos.
 - `tests/test_protocol.py` — cada comando e os formatos de resposta,
   incluindo os offsets exatos que os drivers reais usam para fatiar as
-  respostas verbosas.
+  respostas verbosas, e os comandos `GO`/`GX`/`GE`/`GD`/`GA` de
+  rastreamento por GPS.
+- `tests/test_tracking.py` — a geodesia WGS84 do rastreamento de antena
+  (conversão geodésico → ECEF → ENU, azimute/elevação/distância) contra
+  casos de referência conferidos à mão.
 - `tests/test_end_to_end_serial.py` — **ponta a ponta por uma porta
   serial real** (par de PTYs): um controlador externo consulta resolução,
   comanda movimento, aguarda com `A`, dá halt, envia vários comandos numa
@@ -178,12 +196,13 @@ pytest
 pantiltsim/
   device.py            # eixos pan/tilt: posição, velocidade, limites, modos
   protocol.py          # interpretador do protocolo ASCII do fabricante
+  tracking.py          # geodesia WGS84 do rastreamento de antena por GPS
   transport_serial.py  # porta serial RS-485/USB, com reconexão
   config.py            # parâmetros do modelo (JSON)
   app_cli.py           # modo headless
   main.py              # ponto de entrada
   gui/
-    main_window.py     # conexão, telemetria, controle, terminal DPCL
+    main_window.py     # conexão, telemetria, controle, rastreamento GPS, terminal DPCL
     pantilt_widget.py  # vista principal e instrumentos
     ptu_render.py      # renderizador 3D do PTU com antena helicoidal
 tools/ptu_client.py    # controlador de exemplo / referência

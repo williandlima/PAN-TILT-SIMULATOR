@@ -360,6 +360,12 @@ class PanTiltDevice:
         self._thread: threading.Thread | None = None
         self._running = False
 
+        # Import tardio para evitar dependência circular (tracking.py usa
+        # apenas o dispositivo pelo lado de fora, não o contrário).
+        from .tracking import GeoTracker
+
+        self.geo_tracker = GeoTracker(self)
+
     # ------------------------------------------------------------------
     @property
     def axes(self) -> tuple[Axis, Axis]:
@@ -425,10 +431,12 @@ class PanTiltDevice:
                 self.slaved_execution = False
                 self.monitor = MonitorState()
                 self._pending_targets.clear()
+                self.geo_tracker.disable()
 
     def halt_all(self) -> None:
         with self.lock:
             self.monitor.enabled = False
+            self.geo_tracker.disable()
             self._pending_targets.clear()
             for axis in self.axes:
                 axis.halt()
@@ -504,4 +512,8 @@ class PanTiltDevice:
                 "slaved": self.slaved_execution,
                 "echo": self.echo_enabled,
                 "verbose": self.verbose_feedback,
+                "geo_tracking": self.geo_tracker.state.enabled,
+                "geo_observer": self.geo_tracker.state.observer,
+                "geo_target": self.geo_tracker.state.target,
+                "geo_look": self.geo_tracker.state.last_look,
             }

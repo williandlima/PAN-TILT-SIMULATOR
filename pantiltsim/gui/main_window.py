@@ -10,6 +10,7 @@ permite digitar comandos DPCL crus.
 from __future__ import annotations
 
 import logging
+import time
 
 from PyQt5.QtCore import QObject, Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QKeySequence
@@ -37,6 +38,7 @@ from PyQt5.QtWidgets import (
 from .. import __version__
 from ..device import PanTiltDevice
 from ..protocol import DPCLProtocol
+from ..tracking import GeoPoint, LinearTrajectory
 from ..transport_serial import SerialServer, SerialTransport, SerialTransportConfig
 from .help_dialog import HelpDialog, terminal_help_text
 from .pantilt_widget import PanTiltWidget
@@ -82,6 +84,12 @@ class MainWindow(QMainWindow):
         self.server: SerialServer | None = None
         self._updating_widgets = False
 
+        self._demo_trajectory: LinearTrajectory | None = None
+        self._demo_start_time: float = 0.0
+        self._demo_timer = QTimer(self)
+        self._demo_timer.setInterval(500)
+        self._demo_timer.timeout.connect(self._demo_tick)
+
         self._build_ui()
         self._build_menu()
         self._refresh_ports()
@@ -108,6 +116,7 @@ class MainWindow(QMainWindow):
         tabs = QTabWidget()
         tabs.addTab(self._build_control_tab(), "Controle")
         tabs.addTab(self._build_config_tab(), "Configuração")
+        tabs.addTab(self._build_tracking_tab(), "Rastreamento GPS")
         tabs.addTab(self._build_terminal_tab(), "Terminal DPCL")
         side.addWidget(tabs, stretch=1)
 
@@ -132,6 +141,7 @@ class MainWindow(QMainWindow):
             ("O núcleo do projeto", "O núcleo do projeto", None),
             ("A interface", "A interface", None),
             ("Modos de teste", "Modos de teste", QKeySequence("F2")),
+            ("Rastreamento de antena por GPS", "Rastreamento de antena por GPS", QKeySequence("F4")),
             ("Comandos DPCL", "Comandos DPCL", QKeySequence("F3")),
         ]
         for rotulo, topico, atalho in topicos:
@@ -147,7 +157,8 @@ class MainWindow(QMainWindow):
         ajuda.addAction(sobre)
 
         self.statusBar().showMessage(
-            "F1 ajuda · F2 modos de teste · F3 comandos DPCL · digite ? no terminal DPCL"
+            "F1 ajuda · F2 modos de teste · F3 comandos DPCL · F4 rastreamento GPS · "
+            "digite ? no terminal DPCL"
         )
 
     def _show_help(self, topic: str = "Primeiros passos") -> None:
@@ -365,6 +376,110 @@ class MainWindow(QMainWindow):
             combo.addItem(label, userData=value)
         return combo
 
+    # -- aba de rastreamento GPS (antenna tracking) --------------------------
+    def _build_tracking_tab(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+
+        intro = QLabel(
+            "Rastreamento de antena por telemetria: aponta o pan-tilt automaticamente "
+            "para um alvo (aeronave, drone, balão, foguete de sondagem) a partir da "
+            "posição GPS da estação de solo e do alvo — o mesmo método usado por "
+            "estações terrenas de satélite e antenas de telemetria reais (geodesia "
+            "WGS84 completa: geodésico → ECEF → ENU, não uma aproximação de Terra plana). "
+            "Comandos DPCL: <code>GO</code> (estação), <code>GX</code> (alvo), "
+            "<code>GE</code>/<code>GD</code> (habilita/desabilita), <code>GA</code> "
+            "(consulta ângulos) — extensão própria deste simulador, ver Ajuda → Comandos DPCL."
+        )
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+
+        observer_box = QGroupBox("Estação de solo (observador)")
+        observer_form = QFormLayout(observer_box)
+        self.observer_lat_spin = self._make_geo_spin(-90.0, 90.0)
+        self.observer_lon_spin = self._make_geo_spin(-180.0, 180.0)
+        self.observer_alt_spin = self._make_alt_spin()
+        observer_form.addRow("Latitude:", self.observer_lat_spin)
+        observer_form.addRow("Longitude:", self.observer_lon_spin)
+        observer_form.addRow("Altitude:", self.observer_alt_spin)
+        set_observer_btn = QPushButton("Definir estação (GO)")
+        set_observer_btn.clicked.connect(self._send_set_observer)
+        observer_form.addRow(set_observer_btn)
+        layout.addWidget(observer_box)
+
+        target_box = QGroupBox("Alvo (veículo rastreado por GPS)")
+        target_form = QFormLayout(target_box)
+        self.target_lat_spin = self._make_geo_spin(-90.0, 90.0)
+        self.target_lon_spin = self._make_geo_spin(-180.0, 180.0)
+        self.target_alt_spin = self._make_alt_spin()
+        target_form.addRow("Latitude:", self.target_lat_spin)
+        target_form.addRow("Longitude:", self.target_lon_spin)
+        target_form.addRow("Altitude:", self.target_alt_spin)
+        set_target_btn = QPushButton("Definir alvo (GX)")
+        set_target_btn.clicked.connect(self._send_set_target)
+        target_form.addRow(set_target_btn)
+        layout.addWidget(target_box)
+
+        demo_box = QGroupBox("Trajetória de demonstração (simula o feed de GPS do veículo)")
+        demo_form = QFormLayout(demo_box)
+        self.demo_heading_spin = QDoubleSpinBox()
+        self.demo_heading_spin.setRange(0.0, 359.99)
+        self.demo_heading_spin.setSuffix(" °")
+        self.demo_heading_spin.setValue(90.0)
+        demo_form.addRow("Rumo:", self.demo_heading_spin)
+
+        self.demo_speed_spin = QDoubleSpinBox()
+        self.demo_speed_spin.setRange(0.0, 1000.0)
+        self.demo_speed_spin.setSuffix(" m/s")
+        self.demo_speed_spin.setValue(80.0)
+        demo_form.addRow("Velocidade:", self.demo_speed_spin)
+
+        self.demo_climb_spin = QDoubleSpinBox()
+        self.demo_climb_spin.setRange(-100.0, 100.0)
+        self.demo_climb_spin.setSuffix(" m/s")
+        self.demo_climb_spin.setValue(0.0)
+        demo_form.addRow("Subida:", self.demo_climb_spin)
+
+        self.demo_btn = QPushButton("Iniciar demonstração")
+        self.demo_btn.clicked.connect(self._toggle_demo_trajectory)
+        demo_form.addRow(self.demo_btn)
+        layout.addWidget(demo_box)
+
+        self.geo_enable_check = QCheckBox("Habilitar rastreamento automático (GE / GD)")
+        self.geo_enable_check.toggled.connect(self._toggle_geo_tracking)
+        layout.addWidget(self.geo_enable_check)
+
+        geo_status_box = QGroupBox("Apontamento calculado")
+        geo_grid = QGridLayout(geo_status_box)
+        self.geo_labels: dict[str, QLabel] = {}
+        for row, (title, key) in enumerate(
+            [("Azimute", "az"), ("Elevação", "el"), ("Distância", "range")]
+        ):
+            geo_grid.addWidget(QLabel(f"{title}:"), row, 0)
+            label = QLabel("—")
+            label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            self.geo_labels[key] = label
+            geo_grid.addWidget(label, row, 1)
+        geo_grid.setColumnStretch(1, 1)
+        layout.addWidget(geo_status_box)
+
+        layout.addStretch(1)
+        return page
+
+    def _make_geo_spin(self, lo: float, hi: float) -> QDoubleSpinBox:
+        spin = QDoubleSpinBox()
+        spin.setRange(lo, hi)
+        spin.setDecimals(6)
+        spin.setSuffix(" °")
+        return spin
+
+    def _make_alt_spin(self) -> QDoubleSpinBox:
+        spin = QDoubleSpinBox()
+        spin.setRange(-500.0, 50_000.0)
+        spin.setDecimals(1)
+        spin.setSuffix(" m")
+        return spin
+
     # -- aba de terminal ------------------------------------------------------
     def _build_terminal_tab(self) -> QWidget:
         page = QWidget()
@@ -494,6 +609,61 @@ class MainWindow(QMainWindow):
             self.tilt_target_spin.setValue(current + tilt_dir * step)
         self._send_goto()
 
+    # -- rastreamento GPS -------------------------------------------------
+    def _send_set_observer(self) -> None:
+        lat = self.observer_lat_spin.value()
+        lon = self.observer_lon_spin.value()
+        alt = self.observer_alt_spin.value()
+        self._send_local(f"GO{lat},{lon},{alt}")
+
+    def _send_set_target(self) -> None:
+        lat = self.target_lat_spin.value()
+        lon = self.target_lon_spin.value()
+        alt = self.target_alt_spin.value()
+        self._send_local(f"GX{lat},{lon},{alt}")
+
+    def _toggle_geo_tracking(self, checked: bool) -> None:
+        if self._updating_widgets:
+            return
+        self._send_local("GE" if checked else "GD")
+
+    def _toggle_demo_trajectory(self) -> None:
+        if self._demo_trajectory is None:
+            start = GeoPoint(
+                lat_deg=self.target_lat_spin.value(),
+                lon_deg=self.target_lon_spin.value(),
+                alt_m=self.target_alt_spin.value(),
+            )
+            self._demo_trajectory = LinearTrajectory(
+                start=start,
+                heading_deg=self.demo_heading_spin.value(),
+                speed_mps=self.demo_speed_spin.value(),
+                climb_mps=self.demo_climb_spin.value(),
+            )
+            self._demo_start_time = time.monotonic()
+            self._demo_timer.start()
+            self.demo_btn.setText("Parar demonstração")
+        else:
+            self._demo_timer.stop()
+            self._demo_trajectory = None
+            self.demo_btn.setText("Iniciar demonstração")
+
+    def _demo_tick(self) -> None:
+        if self._demo_trajectory is None:
+            return
+        elapsed = time.monotonic() - self._demo_start_time
+        point = self._demo_trajectory.position_at(elapsed)
+
+        self._updating_widgets = True
+        try:
+            self.target_lat_spin.setValue(point.lat_deg)
+            self.target_lon_spin.setValue(point.lon_deg)
+            self.target_alt_spin.setValue(point.alt_m)
+        finally:
+            self._updating_widgets = False
+
+        self._send_local(f"GX{point.lat_deg},{point.lon_deg},{point.alt_m}")
+
     def _send_typed_command(self) -> None:
         text = self.command_input.text().strip()
         if not text:
@@ -545,6 +715,16 @@ class MainWindow(QMainWindow):
             + (" · slaved" if snap["slaved"] else "")
         )
 
+        look = snap.get("geo_look")
+        if look is not None:
+            self.geo_labels["az"].setText(f"{look.azimuth_deg:.2f}°")
+            self.geo_labels["el"].setText(f"{look.elevation_deg:.2f}°")
+            self.geo_labels["range"].setText(f"{look.range_m:,.1f} m")
+        else:
+            self.geo_labels["az"].setText("—")
+            self.geo_labels["el"].setText("—")
+            self.geo_labels["range"].setText("—")
+
         self._sync_widgets(snap)
 
     def _sync_widgets(self, snap: dict) -> None:
@@ -559,6 +739,8 @@ class MainWindow(QMainWindow):
                 self.verbose_check.setChecked(snap["verbose"])
             if self.slaved_check.isChecked() != snap["slaved"]:
                 self.slaved_check.setChecked(snap["slaved"])
+            if self.geo_enable_check.isChecked() != snap["geo_tracking"]:
+                self.geo_enable_check.setChecked(snap["geo_tracking"])
             self._sync_combo(self.control_mode_combo, "CV" if snap["control_mode"] == "velocity" else "CI")
             self._sync_combo(
                 self.limit_mode_combo,
@@ -580,6 +762,7 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------
     def closeEvent(self, event) -> None:  # noqa: N802
+        self._demo_timer.stop()
         if self.server is not None:
             self.server.stop()
         self.device.stop()

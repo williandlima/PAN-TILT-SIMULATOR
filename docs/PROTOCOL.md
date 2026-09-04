@@ -138,6 +138,57 @@ Não são apenas respostas: o simulador tem física e estado.
   timeout de segurança (`DPCLProtocol(await_timeout=...)`) para o enlace
   nunca ficar preso para sempre.
 
+## Rastreamento de antena por GPS (comandos `G...`, extensão do simulador)
+
+O PTU-D300E oficial suporta, como acessório, um módulo de apontamento
+geográfico (**PTU-DGPM — Geo-Pointing Module**) que aponta o pan-tilt a
+partir de posições geodésicas — o mesmo princípio usado por estações
+terrenas de rastreamento de satélite e antenas de telemetria de veículos
+(aeronaves, drones, foguetes de sondagem). Há evidência forte (páginas de
+produto da própria FLIR) de que esse módulo trabalha com uma "pose de
+seis dimensões: latitude, longitude, altitude, roll, pitch, yaw", o que
+bate com a existência de comandos com nomes como `GLLA`/`GPRY` citados
+por usuários — mas o manual oficial exato (sintaxe, formato, unidades)
+não pôde ser confirmado nesta sessão (rede bloqueada, ver "Fontes").
+
+Para não inventar uma sintaxe travestida de oficial, o simulador
+implementa a **mesma funcionalidade** (apontamento automático a partir de
+posições GPS, com geodesia WGS84 completa) sob um conjunto de comandos
+**claramente identificado como extensão própria**, com prefixo `G`:
+
+| Comando | | Descrição |
+|---------|--|-----------|
+| `GO<lat>,<lon>,<alt>` | 🔧 | Define a posição da **estação de solo** (observador). Sem valor, consulta. |
+| `GX<lat>,<lon>,<alt>` | 🔧 | Define a posição do **alvo** (veículo rastreado). Sem valor, consulta. Se o rastreamento estiver habilitado (`GE`), o pan-tilt já se move para o novo apontamento. |
+| `GE` | 🔧 | Habilita o rastreamento automático: cada `GX` recalcula azimute/elevação e comanda `PP`/`TP`. |
+| `GD` | 🔧 | Desabilita o rastreamento automático (posição atual não muda). |
+| `GA` | 🔧 | Consulta os últimos ângulos calculados: `azimute,elevação,distância`. |
+
+🔧 = extensão própria deste simulador — funcionalidade real, sintaxe não
+confirmada contra o manual oficial.
+
+Latitude/longitude são graus decimais WGS84 (o mesmo datum que o GPS usa
+nativamente); altitude é elipsoidal, em metros. O cálculo é geodésico →
+ECEF (Earth-Centered, Earth-Fixed) → ENU (East-North-Up, plano tangente
+local da estação) — o método padrão de rastreamento de antena, não uma
+aproximação de Terra plana; ver `pantiltsim/tracking.py` para a
+implementação e `tests/test_tracking.py` para os casos de referência
+conferidos à mão.
+
+**Isto não é orientação de armas.** O módulo só resolve "para onde
+apontar" a partir de duas posições geográficas — a mesma matemática vale
+para qualquer veículo com GPS. Ele não rastreia, identifica nem interage
+com o veículo: apenas converte coordenadas recebidas de uma fonte externa
+(um receptor GPS real, ou aqui, para demonstração, o gerador de
+trajetória `LinearTrajectory`) num ângulo de apontamento de antena — a
+mesma função que uma antena parabólica de estação terrena exerce ao
+seguir um satélite.
+
+Se você tiver acesso ao manual oficial do PTU-DGPM e a sintaxe exata
+(`GLLA`, `GPRY` ou outra) divergir do que está aqui, ajuste os nomes de
+comando em `pantiltsim/protocol.py` (`_geo_command`) e
+`pantiltsim/tracking.py` para bater com o hardware real.
+
 ## Erros
 
 ```

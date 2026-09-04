@@ -44,6 +44,7 @@ import re
 import time
 
 from .device import ControlMode, LimitMode, PanTiltDevice, PowerMode, StepMode
+from .tracking import GeoPoint, look_angles
 
 log = logging.getLogger(__name__)
 
@@ -253,6 +254,8 @@ class DPCLProtocol:
             return self._combined_move(token)
         if token.startswith("W"):
             return self._step_mode(token)
+        if token.startswith("G"):
+            return self._geo_command(token)
 
         code, arg = token[0], token[1:]
 
@@ -398,6 +401,66 @@ class DPCLProtocol:
         self.device.tilt.set_target_position(tilt_pos)
         return self._ok()
 
+    # -- rastreamento de antena por GPS (extensão própria deste simulador) --
+    #
+    # Prefixo G, inspirado no que a documentação da FLIR aparenta usar
+    # para o módulo de apontamento geográfico (PTU-DGPM) — mas os nomes
+    # exatos abaixo (GO/GX/GE/GD/GA) NÃO são a sintaxe oficial GLLA/GPRY,
+    # que não pôde ser confirmada nesta sessão. Ver docs/PROTOCOL.md e
+    # pantiltsim/tracking.py para a matemática (WGS84/ECEF/ENU) e o
+    # racional completo.
+    def _geo_command(self, token: str) -> str:
+        code = token[1:2]
+        arg = token[2:]
+
+        if code == "O":
+            return self._geo_point_field("observer", "Ground station", arg)
+        if code == "X":
+            return self._geo_point_field("target", "Tracked target", arg)
+        if code == "E" and arg == "":
+            self.device.geo_tracker.enable()
+            return self._ok()
+        if code == "D" and arg == "":
+            self.device.geo_tracker.disable()
+            return self._ok()
+        if code == "A" and arg == "":
+            return self._geo_query_angles()
+
+        raise ProtocolError(f"Unknown command '{token}'")
+
+    def _geo_point_field(self, which: str, label: str, arg: str) -> str:
+        tracker = self.device.geo_tracker
+        if arg == "":
+            point = tracker.state.observer if which == "observer" else tracker.state.target
+            if point is None:
+                raise ProtocolError(f"{label} position not set")
+            value = f"{point.lat_deg},{point.lon_deg},{point.alt_m}"
+            return self._value(value, f"{label} position (lat,lon,alt) is")
+
+        parts = arg.split(",")
+        if len(parts) != 3:
+            raise ProtocolError(f"Expected <lat>,<lon>,<alt>, got '{arg}'")
+        lat, lon, alt = (self._parse_float(p) for p in parts)
+        if not -90.0 <= lat <= 90.0:
+            raise ProtocolError(f"Latitude out of range: {lat}")
+        if not -180.0 <= lon <= 180.0:
+            raise ProtocolError(f"Longitude out of range: {lon}")
+
+        point = GeoPoint(lat_deg=lat, lon_deg=lon, alt_m=alt)
+        if which == "observer":
+            tracker.set_observer(point)
+        else:
+            tracker.set_target(point)
+        return self._ok()
+
+    def _geo_query_angles(self) -> str:
+        tracker = self.device.geo_tracker
+        if tracker.state.observer is None or tracker.state.target is None:
+            raise ProtocolError("Set GO (ground station) and GX (target) first")
+        look = look_angles(tracker.state.observer, tracker.state.target)
+        value = f"{look.azimuth_deg:.4f},{look.elevation_deg:.4f},{look.range_m:.1f}"
+        return self._value(value, "Azimuth,Elevation,Range is")
+
     def _set_host_port(self, token: str) -> str:
         """Comando ``@(baud,0,F)``: configura a porta serial do host."""
         match = _BAUD_RE.match(token)
@@ -462,6 +525,12 @@ class DPCLProtocol:
             return int(text)
         except ValueError:
             raise ProtocolError(f"Invalid integer value '{text}'")
+
+    def _parse_float(self, text: str) -> float:
+        try:
+            return float(text)
+        except ValueError:
+            raise ProtocolError(f"Invalid decimal value '{text}'")
 
     def _parse_positive_int(self, text: str) -> int:
         value = self._parse_int(text)

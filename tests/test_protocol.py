@@ -263,3 +263,84 @@ def test_cr_and_lf_terminators_are_accepted(ptu):
     assert device.pan.target_position == 100
     protocol.feed(b"PP200\r\n")
     assert device.pan.target_position == 200
+
+
+# -- rastreamento de antena por GPS (comandos GO/GX/GE/GD/GA, extensão do simulador) --
+def test_geo_set_and_query_observer_and_target(ptu):
+    device, protocol = ptu
+    assert protocol.execute_line("GO-23.5,-46.6,760").startswith("*")
+    assert protocol.execute_line("GX-22.9,-43.2,0").startswith("*")
+
+    response = protocol.execute_line("GO")
+    assert "-23.5" in response and "-46.6" in response and "760" in response
+
+
+def test_geo_query_before_set_is_an_error(ptu):
+    _, protocol = ptu
+    assert protocol.execute_line("GO").startswith("!")
+    assert protocol.execute_line("GA").startswith("!")
+
+
+def test_geo_rejects_invalid_latitude(ptu):
+    _, protocol = ptu
+    assert protocol.execute_line("GO95,0,0").startswith("!")
+
+
+def test_geo_rejects_malformed_value(ptu):
+    _, protocol = ptu
+    assert protocol.execute_line("GOnotanumber,0,0").startswith("!")
+    assert protocol.execute_line("GO0,0").startswith("!")  # faltam campos
+
+
+def test_geo_angles_query_matches_look_angles(ptu):
+    from pantiltsim.tracking import GeoPoint, look_angles
+
+    device, protocol = ptu
+    protocol.execute_line("GO0,0,0")
+    protocol.execute_line("GX0,1,0")
+
+    response = protocol.execute_line("GA")
+    assert response.startswith("*")
+
+    expected = look_angles(GeoPoint(0, 0, 0), GeoPoint(0, 1, 0))
+    az_str, el_str, range_str = response.split("is")[-1].strip().split(",")
+    assert float(az_str) == pytest.approx(expected.azimuth_deg, abs=0.001)
+    assert float(el_str) == pytest.approx(expected.elevation_deg, abs=0.001)
+
+
+def test_geo_enable_disable_tracking_moves_and_stops_following(ptu):
+    device, protocol = ptu
+    protocol.execute_line("GO0,0,0")
+    protocol.execute_line("GX0,1,0")
+
+    protocol.execute_line("GE")
+    pan_when_enabled = device.pan.target_position
+    assert pan_when_enabled != 0
+
+    protocol.execute_line("GD")
+    protocol.execute_line("GX1,0,0")  # alvo mudou, mas tracking está desligado
+    assert device.pan.target_position == pan_when_enabled  # não seguiu
+
+
+def test_geo_tracking_state_reported_in_snapshot(ptu):
+    device, protocol = ptu
+    protocol.execute_line("GO0,0,0")
+    protocol.execute_line("GX0,1,0")
+    protocol.execute_line("GE")
+
+    snap = device.snapshot()
+    assert snap["geo_tracking"] is True
+    assert snap["geo_observer"] is not None
+    assert snap["geo_target"] is not None
+    assert snap["geo_look"] is not None
+
+
+def test_reset_disables_geo_tracking(ptu):
+    device, protocol = ptu
+    protocol.execute_line("GO0,0,0")
+    protocol.execute_line("GX0,1,0")
+    protocol.execute_line("GE")
+    assert device.geo_tracker.state.enabled is True
+
+    protocol.execute_line("RE")
+    assert device.geo_tracker.state.enabled is False

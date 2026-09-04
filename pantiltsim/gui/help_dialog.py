@@ -285,8 +285,8 @@ def _test_modes() -> str:
     <pre>pip install -e ".[dev]"
 pytest</pre>
     <p>
-      No Linux, 44 testes passam. No Windows o resultado correto é
-      <b>37 passed, 7 skipped</b>: os 7 testes ponta a ponta usam PTYs, que só
+      No Linux, 68 testes passam. No Windows o resultado correto é
+      <b>61 passed, 7 skipped</b>: os 7 testes ponta a ponta usam PTYs, que só
       existem em sistemas POSIX.
     </p>
 
@@ -300,6 +300,84 @@ pytest</pre>
       <tr><td>Micropasso → Quarter</td><td>Resolução muda; a unidade <b>não</b> sai do lugar</td></tr>
       <tr><td>Alvo fora do curso</td><td>É truncado no limite, não estoura</td></tr>
     </table>
+    """
+
+
+def _antenna_tracking() -> str:
+    return """
+    <h2>Rastreamento de antena por GPS (antenna tracking)</h2>
+    <p class="lead">
+      A funcionalidade mais avançada do simulador: apontamento automático
+      a partir de posições GPS reais, com geodesia completa.
+    </p>
+
+    <h3>O que é</h3>
+    <p>
+      Uma estação de solo com pan-tilt aponta continuamente uma antena
+      (de telemetria, ou uma antena helicoidal como a que este simulador
+      desenha) na direção de um veículo — aeronave, drone, balão de
+      sondagem, foguete de teste — a partir da posição GPS que <b>o
+      próprio veículo transmite por telemetria</b>. É exatamente o mesmo
+      princípio das estações terrenas que seguem satélites, e o acessório
+      oficial da FLIR para isso é o <b>PTU-DGPM (Geo-Pointing Module)</b>.
+    </p>
+    <p>
+      <b>Importante:</b> isto não é orientação de armas nem rastreamento
+      ativo de um alvo não cooperativo. O sistema só sabe apontar para
+      onde um receptor GPS <i>a bordo do próprio veículo</i> diz que ele
+      está — a mesma função que uma parabólica de estação terrena faz ao
+      seguir um satélite.
+    </p>
+
+    <h3>A matemática por trás</h3>
+    <p>
+      Duas posições geodésicas (latitude, longitude, altitude — o formato
+      que qualquer GPS entrega, no datum WGS84) viram um vetor
+      azimute/elevação/distância por um caminho de três passos:
+    </p>
+    <ol>
+      <li>Geodésico → <b>ECEF</b> (Earth-Centered, Earth-Fixed): coordenadas
+          cartesianas com origem no centro da Terra.</li>
+      <li>ECEF → <b>ENU</b> (East-North-Up): projeção no plano tangente
+          local da estação de solo.</li>
+      <li>Azimute = atan2(Leste, Norte); Elevação = atan2(Cima, distância
+          horizontal).</li>
+    </ol>
+    <p>
+      É o método padrão de rastreamento de antena (o mesmo do Gpredict e
+      de estações terrenas de satélite) — não uma aproximação de Terra
+      plana. Implementado em <code>pantiltsim/tracking.py</code>.
+    </p>
+
+    <h3>Usando pela aba "Rastreamento GPS"</h3>
+    <table>
+      <tr><th>Passo</th><th>O que fazer</th></tr>
+      <tr><td>1</td><td>Preencha latitude/longitude/altitude da <b>estação de solo</b> e clique em <b>Definir estação (GO)</b>.</td></tr>
+      <tr><td>2</td><td>Preencha a posição do <b>alvo</b> e clique em <b>Definir alvo (GX)</b> — ou use a trajetória de demonstração abaixo.</td></tr>
+      <tr><td>3</td><td>Marque <b>Habilitar rastreamento automático</b>: a cada atualização de alvo, o pan-tilt já se move para o novo apontamento.</td></tr>
+      <tr><td>4</td><td>Acompanhe azimute, elevação e distância calculados no painel "Apontamento calculado".</td></tr>
+    </table>
+    <p>
+      A <b>trajetória de demonstração</b> simula o feed de GPS de um
+      veículo com rumo, velocidade e taxa de subida constantes — útil
+      para ver o rastreamento em ação sem hardware GPS real.
+    </p>
+
+    <h3>Pelos comandos DPCL</h3>
+    <pre>GO-23.5,-46.6,760     define a estação de solo
+GX-22.9,-43.2,0       define/atualiza o alvo (dispara o apontamento se GE estiver ligado)
+GE                    habilita o rastreamento automático
+GD                    desabilita
+GA                    consulta azimute,elevação,distância</pre>
+    <p>
+      <b>Atenção:</b> os comandos <code>G...</code> são uma
+      <b>extensão própria deste simulador</b> — a sintaxe oficial exata do
+      PTU-DGPM (possivelmente <code>GLLA</code>/<code>GPRY</code>) não pôde
+      ser confirmada contra o manual oficial nesta sessão. A
+      funcionalidade e a matemática são reais; os nomes de comando podem
+      precisar de ajuste se você tiver acesso ao manual do acessório real.
+      Ver <code>docs/PROTOCOL.md</code> para os detalhes.
+    </p>
     """
 
 
@@ -363,6 +441,20 @@ def _command_reference() -> str:
       <tr><td><code>DS</code> / <code>DR</code> / <code>DF</code></td><td>Salvar / restaurar / padrões de fábrica</td></tr>
     </table>
 
+    <h3>Rastreamento de antena por GPS (extensão do simulador)</h3>
+    <table>
+      <tr><th>Comando</th><th>Faz</th></tr>
+      <tr><td><code>GO&lt;lat&gt;,&lt;lon&gt;,&lt;alt&gt;</code></td><td>Define/consulta a posição da estação de solo</td></tr>
+      <tr><td><code>GX&lt;lat&gt;,&lt;lon&gt;,&lt;alt&gt;</code></td><td>Define/consulta a posição do alvo (dispara o apontamento se habilitado)</td></tr>
+      <tr><td><code>GE</code> / <code>GD</code></td><td>Habilita / desabilita o rastreamento automático</td></tr>
+      <tr><td><code>GA</code></td><td>Consulta azimute, elevação e distância calculados</td></tr>
+    </table>
+    <p>
+      Ver o tópico <b>Rastreamento de antena por GPS</b> nesta ajuda para o
+      funcionamento completo. Sintaxe própria do simulador — não confirmada
+      contra o manual oficial do acessório PTU-DGPM.
+    </p>
+
     <h3>Abertura recomendada, no seu software</h3>
     <pre>ED          desliga o eco
 FT          respostas ficam "* &lt;valor&gt;"
@@ -381,6 +473,7 @@ _TOPICS = [
     ("O núcleo do projeto", _core_concepts),
     ("A interface", lambda device: _interface_guide()),
     ("Modos de teste", lambda device: _test_modes()),
+    ("Rastreamento de antena por GPS", lambda device: _antenna_tracking()),
     ("Comandos DPCL", lambda device: _command_reference()),
 ]
 
@@ -448,6 +541,12 @@ def terminal_help_text(device: PanTiltDevice) -> str:
         "  R RP RT   reset ambos/pan/tilt  WP<m>     micropasso F H Q E A\n"
         "  ED / EE   eco off / on          FT / FV   feedback terso / verboso\n"
         "  V         versão                B         B<pan>,<tilt>,<vp>,<vt>\n"
+        "\n"
+        "  -- rastreamento de antena por GPS (extensão do simulador) --\n"
+        "  GO<lat>,<lon>,<alt>   define a estação de solo\n"
+        "  GX<lat>,<lon>,<alt>   define/atualiza o alvo\n"
+        "  GE / GD   habilita / desabilita o rastreamento automático\n"
+        "  GA        consulta azimute,elevação,distância\n"
         "\n"
         "Digite ?? para abrir a janela de ajuda completa (ou tecle F1).\n"
         "───────────────────────────────────────────────"
