@@ -318,8 +318,7 @@ def _antenna_tracking() -> str:
       desenha) na direção de um veículo — aeronave, drone, balão de
       sondagem, foguete de teste — a partir da posição GPS que <b>o
       próprio veículo transmite por telemetria</b>. É exatamente o mesmo
-      princípio das estações terrenas que seguem satélites, e o acessório
-      oficial da FLIR para isso é o <b>PTU-DGPM (Geo-Pointing Module)</b>.
+      princípio das estações terrenas que seguem satélites.
     </p>
     <p>
       <b>Importante:</b> isto não é orientação de armas nem rastreamento
@@ -327,6 +326,18 @@ def _antenna_tracking() -> str:
       onde um receptor GPS <i>a bordo do próprio veículo</i> diz que ele
       está — a mesma função que uma parabólica de estação terrena faz ao
       seguir um satélite.
+    </p>
+    <p>
+      <b>Isto não é o recurso Geo-Pointing (GPM) da FLIR.</b> A FLIR tem,
+      sim, um recurso oficial embutido nas unidades E-Series com esse
+      nome — mas ele roda pela interface Ethernet/IP da unidade (não pelo
+      protocolo serial ASCII usado aqui), exige uma calibração prévia
+      apontando para 4+ pontos de referência conhecidos, e a própria FLIR
+      documenta que ele é para <b>instalações fixas</b> — explicitamente
+      <b>não recomendado para plataformas móveis</b> (aeronave, veículo).
+      Este módulo do simulador modela o conceito correlato, porém
+      distinto, de uma estação de rastreamento contínuo por telemetria —
+      ver <code>docs/PROTOCOL.md</code> para as fontes.
     </p>
 
     <h3>A matemática por trás</h3>
@@ -371,12 +382,15 @@ GD                    desabilita
 GA                    consulta azimute,elevação,distância</pre>
     <p>
       <b>Atenção:</b> os comandos <code>G...</code> são uma
-      <b>extensão própria deste simulador</b> — a sintaxe oficial exata do
-      PTU-DGPM (possivelmente <code>GLLA</code>/<code>GPRY</code>) não pôde
-      ser confirmada contra o manual oficial nesta sessão. A
-      funcionalidade e a matemática são reais; os nomes de comando podem
-      precisar de ajuste se você tiver acesso ao manual do acessório real.
-      Ver <code>docs/PROTOCOL.md</code> para os detalhes.
+      <b>extensão própria deste simulador</b>, sem correspondência oficial
+      confirmada em nenhum manual FLIR acessado — nem os nomes
+      (<code>GLLA</code>/<code>GPRY</code> nunca foram encontrados em
+      nenhuma fonte) nem o transporte (o Geo-Pointing real da FLIR usa
+      Ethernet, não serial ASCII). A matemática de apontamento (WGS84,
+      ECEF/ENU) é real e correta; o protocolo que a expõe aqui é didático,
+      pensado para caber no mesmo terminal DPCL do resto do simulador.
+      Ver <code>docs/PROTOCOL.md</code> para as fontes usadas nesta
+      verificação.
     </p>
     """
 

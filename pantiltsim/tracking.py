@@ -37,12 +37,36 @@ ou aqui, para demonstração, um gerador de trajetória simulada) num
 parabólica de estação terrena exerce ao seguir um satélite.
 
 Os comandos DPCL usados para alimentar isto (``GO``, ``GX``, ``GE``,
-``GD``, ``GA``) são uma extensão própria deste simulador, com prefixo
-``G`` inspirado no que a documentação oficial da FLIR aparenta usar para
-o módulo de apontamento geográfico (PTU-DGPM) — mas a sintaxe exata
-oficial (``GLLA``, ``GPRY``) não pôde ser confirmada nesta sessão (ver
-docs/PROTOCOL.md). Ajuste os nomes de comando aqui se conseguir acesso
-ao manual oficial e quiser bater exatamente com ele.
+``GD``, ``GA``) são uma extensão própria deste simulador — a sintaxe
+exata oficial (``GLLA``, ``GPRY`` ou qualquer outra) não pôde ser
+confirmada nesta sessão, e o mecanismo real difere do que está aqui:
+
+O recurso oficial equivalente da FLIR (Geo-Pointing / GPM, embutido de
+fábrica nas unidades E-Series — E46, D48E, D100E, D300E) é confirmado,
+via páginas de suporte oficiais da própria FLIR (flir.custhelp.com), mas
+com uma arquitetura diferente desta extensão:
+
+- Roda sobre a **interface Ethernet/IP embutida**, não sobre o protocolo
+  serial ASCII (DPCL) usado por este simulador via RS-485/USB.
+- Exige uma **calibração prévia** (apontar para 4+ pontos de referência
+  conhecidos) para a unidade aprender sua própria posição e orientação
+  no mundo real — não é só informar lat/lon/alt e pronto.
+- É documentado pela FLIR como recurso para **instalações fixas**, e
+  **não recomendado para plataformas móveis** (aeronave, veículo, etc) —
+  não é compatível com o módulo de estabilização inercial (ISM) usado
+  nesse tipo de instalação.
+- Os parâmetros confirmados são Lat/Lon/Alt(m) do alvo (não uma pose de
+  6 graus de liberdade por comando, como uma sessão anterior chegou a
+  suspeitar a partir de indícios mais fracos).
+
+Ou seja: este módulo modela um **conceito real e distinto** — o de uma
+estação de solo civil de rastreamento de antena de telemetria seguindo
+continuamente um veículo em movimento a partir do GPS que ele mesmo
+transmite (o mesmo princípio de uma estação terrena de satélite) — mas
+isso **não é o mesmo produto/protocolo** que o Geo-Pointing (GPM) da
+FLIR, que é para apontar para coordenadas fixas a partir de uma unidade
+calibrada e parada. Ver docs/PROTOCOL.md para as fontes e o detalhamento
+completo.
 """
 
 from __future__ import annotations

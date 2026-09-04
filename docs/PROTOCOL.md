@@ -40,6 +40,14 @@ comando da tabela abaixo traz o nível de verificação:
    `ci`, `ld`, reset), a resposta fixa de reset `!T!T!P!P*` e o formato
    terso `* <valor>` (ele valida `buffer[0] == '*'` e converte o resto).
 
+3. **`usc-clmc/usc-arm-calibration`** (`arm_head_control/flir_cpi/code/ptu.c`)
+   — terceiro driver independente (acadêmico, em C), verificado numa
+   tentativa posterior de auditoria contra o manual oficial. Confirma o
+   mesmo conjunto de comandos de posição/velocidade/limite dos dois
+   drivers acima, sem contradições — e não contém nenhum comando de
+   geo-posicionamento, reforçando que o recurso Geo-Pointing (ver seção
+   "Rastreamento de antena por GPS") não faz parte do protocolo serial.
+
 Os testes em `tests/test_protocol.py` travam esses formatos: se alguém
 alterar uma resposta confirmada, o teste quebra.
 
@@ -140,21 +148,59 @@ Não são apenas respostas: o simulador tem física e estado.
 
 ## Rastreamento de antena por GPS (comandos `G...`, extensão do simulador)
 
-O PTU-D300E oficial suporta, como acessório, um módulo de apontamento
-geográfico (**PTU-DGPM — Geo-Pointing Module**) que aponta o pan-tilt a
-partir de posições geodésicas — o mesmo princípio usado por estações
-terrenas de rastreamento de satélite e antenas de telemetria de veículos
-(aeronaves, drones, foguetes de sondagem). Há evidência forte (páginas de
-produto da própria FLIR) de que esse módulo trabalha com uma "pose de
-seis dimensões: latitude, longitude, altitude, roll, pitch, yaw", o que
-bate com a existência de comandos com nomes como `GLLA`/`GPRY` citados
-por usuários — mas o manual oficial exato (sintaxe, formato, unidades)
-não pôde ser confirmado nesta sessão (rede bloqueada, ver "Fontes").
+**Atualização desta seção após tentativa de verificação contra o "E
+Series Pan-Tilt Command Reference Manual, Version 6.00 (09/2014)"** — o
+PDF em si continua inacessível (ver "Fontes" no fim: todo domínio que
+hospeda o manual, incluindo `flir.com`, está bloqueado pela política de
+rede deste ambiente de desenvolvimento). Mas buscas indexadas trouxeram
+trechos de **várias páginas de suporte oficiais da própria FLIR**
+(`flir.custhelp.com`) sobre o recurso real de apontamento geográfico, o
+que permite corrigir e detalhar o que a seção anterior desta
+documentação afirmava apenas por indício fraco:
 
-Para não inventar uma sintaxe travestida de oficial, o simulador
-implementa a **mesma funcionalidade** (apontamento automático a partir de
-posições GPS, com geodesia WGS84 completa) sob um conjunto de comandos
-**claramente identificado como extensão própria**, com prefixo `G`:
+- O recurso oficial se chama **Geo-Pointing (GPM)** e vem **embutido de
+  fábrica** em todas as unidades E-Series (E46, D48E, D100E, **D300E**
+  incluído) — não é um acessório separado como uma versão anterior desta
+  documentação sugeria.
+- Ele funciona sobre a **interface Ethernet/IP embutida da unidade**,
+  **não sobre o protocolo serial ASCII (DPCL)** documentado no resto
+  deste arquivo — ou seja, arquiteturalmente separado de tudo que este
+  simulador implementa via RS-485/USB.
+- Exige uma **calibração prévia**: apontar a unidade manualmente para 4
+  ou mais pontos de referência (landmarks) de posição conhecida, feito
+  pela interface web, para a unidade aprender sua própria posição e
+  orientação no mundo real.
+- Os parâmetros confirmados são **Lat (graus), Lon (graus), Alt(m)** do
+  alvo — três valores, não uma pose completa de 6 graus de liberdade por
+  comando como uma sessão de desenvolvimento anterior chegou a suspeitar.
+- A própria FLIR documenta que o Geo-Pointing é para **instalações
+  fixas**, e **"não recomendado para aplicações aerotransportadas,
+  montadas em veículo, ou outras plataformas móveis"** — e é incompatível
+  com o módulo de estabilização inercial (ISM) usado nesse tipo de
+  instalação.
+- Nenhuma fonte acessível (nem as páginas de suporte, nem três drivers de
+  código aberto diferentes que implementam o protocolo serial ASCII
+  desta família de PTU) trouxe o texto literal de comandos como `GLLA`
+  ou `GPRY` — eles seguem **não confirmados**.
+
+**Conclusão da verificação:** o recurso real de geo-apontamento da FLIR
+existe e é genuíno, mas é um produto diferente do que este simulador
+modela — outra interface de transporte (Ethernet, não serial), outro
+fluxo de uso (calibração + coordenada fixa, não telemetria contínua de um
+alvo em movimento) e explicitamente não pensado para rastrear um veículo
+em voo. O que este módulo do simulador implementa é um **conceito real e
+distinto**: uma estação de solo civil de rastreamento de antena de
+telemetria que segue continuamente um veículo em movimento a partir do
+GPS que ele mesmo transmite — o mesmo princípio de uma estação terrena de
+satélite, com a mesma geodesia WGS84 —, não uma reprodução do protocolo
+Geo-Pointing/GPM da FLIR.
+
+Por isso o simulador continua implementando essa funcionalidade sob um
+conjunto de comandos **claramente identificado como extensão própria**,
+por cima do protocolo serial ASCII já usado no resto do simulador (por
+simplicidade de integração, já que o objetivo aqui é ensinar o conceito
+de rastreamento de antena, não replicar byte a byte um recurso Ethernet
+que teria de ser modelado como um serviço à parte):
 
 | Comando | | Descrição |
 |---------|--|-----------|
@@ -184,10 +230,11 @@ trajetória `LinearTrajectory`) num ângulo de apontamento de antena — a
 mesma função que uma antena parabólica de estação terrena exerce ao
 seguir um satélite.
 
-Se você tiver acesso ao manual oficial do PTU-DGPM e a sintaxe exata
-(`GLLA`, `GPRY` ou outra) divergir do que está aqui, ajuste os nomes de
-comando em `pantiltsim/protocol.py` (`_geo_command`) e
-`pantiltsim/tracking.py` para bater com o hardware real.
+Se você precisar do comportamento **oficial** do Geo-Pointing/GPM da FLIR
+byte a byte (interface Ethernet/IP, fluxo de calibração por landmarks),
+isso está fora do escopo desta extensão serial — seria um serviço/porta
+separado a implementar à parte, não um ajuste de nomenclatura em cima do
+que já existe aqui.
 
 ## Erros
 
@@ -220,14 +267,38 @@ mensagens são convenção deste simulador.
 
 Documentos oficiais localizados por busca, mas **bloqueados pela política
 de rede** do ambiente de desenvolvimento (baixe-os manualmente para
-conferência):
+conferência) — tentativa refeita e confirmada numa sessão posterior,
+mesmo resultado:
 
-- `movitherm.com` — `PTU-D300E-Manual.pdf`, `E-Series-Command-Reference-Manual.pdf`
-- `sustainable-robotics.com` — cópias dos mesmos manuais
-- `flir.netx.net`, `oem.flir.com`, `tekgear.com`, `manualslib.com`,
-  `adept.net.au`, `cs.unc.edu`
+- `flir.com`, `movitherm.com`, `sustainable-robotics.com`, `archive.org`,
+  `studylib.net`, `manualzz.com`, `manualslib.com`, `flir.netx.net`,
+  `flir.custhelp.com`, `scribd.com`, `yumpu.com`, `oem.flir.com`,
+  `tekgear.com`, `adept.net.au`, `cs.unc.edu`, `web.archive.org`,
+  `r.jina.ai`
 
-Fontes efetivamente acessadas e usadas para verificação:
+Fontes efetivamente acessadas e usadas para verificação do protocolo
+serial ASCII (PP/TP e o restante da tabela deste documento):
 
 - <https://github.com/hmorris94/FLIR-PTU-Python> — `flirptu/ptu.py`
 - <https://github.com/cburbridge/flir_pantilt_d46> — `src/ptu46_driver.cc`
+- <https://github.com/usc-clmc/usc-arm-calibration> —
+  `arm_head_control/flir_cpi/code/ptu.c` (terceiro driver independente;
+  confirma o mesmo conjunto de comandos serial P/T e **não contém nenhum
+  comando de geo-posicionamento** — reforça que o Geo-Pointing não faz
+  parte do protocolo serial)
+
+Fontes sobre o **Geo-Pointing (GPM)** real, acessadas via trechos
+indexados de busca (o texto completo das páginas continua bloqueado, mas
+os resultados de busca trazem excertos das páginas oficiais da FLIR o
+suficiente para confirmar os fatos usados na seção "Rastreamento de
+antena por GPS" acima):
+
+- `flir.custhelp.com/app/answers/detail/a_id/3233` — "PTU Geo-Pointing
+  Functionality"
+- `flir.custhelp.com/app/answers/detail/a_id/3393` — "GPM and ISM, GPM
+  accuracy"
+- `flir.custhelp.com/app/answers/detail/a_id/3146` — "PTU Pan Tilt System
+  For Antennas"
+- `sustainable-robotics.com/reference/PTU/GPM1.0/PTU-manual-DGPM-V1.0.pdf`
+  — "Web Enabled Geo-Pointing Module Model PTU-DGPM USER'S MANUAL Version
+  1.0" (localizado, mas não acessado — mesmo bloqueio de rede)
