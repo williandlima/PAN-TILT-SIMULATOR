@@ -32,6 +32,12 @@ Resumo do formato:
     - Modo terso (``FT``): ``* <valor>``.
     - Modo verboso (``FV``, padrão de fábrica): ``* <frase> <valor>``.
 
+Os comandos ``G...`` (Geo Pointing Module, seção "GPM" da tabela) foram
+verificados byte a byte contra fotos das páginas do Capítulo 17 do "E
+Series Pan-Tilt Command Reference Manual, Version 6.00 (09/2014)" da
+própria FLIR — ver ``pantiltsim/tracking.py`` (``GpmPose``) para o que
+cada campo significa.
+
 Ver ``docs/PROTOCOL.md`` para a tabela completa e para a marcação do que
 é confirmado por hardware real versus o que segue a nomenclatura da
 família DPCL sem confirmação byte a byte.
@@ -44,12 +50,32 @@ import re
 import time
 
 from .device import ControlMode, LimitMode, PanTiltDevice, PowerMode, StepMode
-from .tracking import GeoPoint, look_angles
 
 log = logging.getLogger(__name__)
 
 _TOKEN_SPLIT_RE = re.compile(r"\s+")
 _BAUD_RE = re.compile(r"^@\((\d+),(\d+),([A-Z])\)$")
+
+# Geo Pointing Module (Capítulo 17 do E Series Command Reference Manual,
+# v6.00 09/2014) — campos confirmados byte a byte contra o manual real.
+# Ordenados do mais longo para o mais curto: como o valor vem colado ao
+# código (ex.: "GLLA-23.5,..."), é preciso casar "GLLA" antes de "GL".
+_GPM_SINGLE_FIELDS = {
+    "GL": "latitude_deg",
+    "GO": "longitude_deg",
+    "GA": "altitude_m",
+    "GR": "roll_deg",
+    "GP": "pitch_deg",
+    "GY": "yaw_deg",
+    "GCP": "camera_pitch_offset_deg",
+}
+_GPM_COMBINED_FIELDS = {
+    "GLLA": ("latitude_deg", "longitude_deg", "altitude_m"),
+    "GRPY": ("roll_deg", "pitch_deg", "yaw_deg"),
+}
+_GPM_CODES_BY_LENGTH = sorted(
+    list(_GPM_SINGLE_FIELDS) + list(_GPM_COMBINED_FIELDS), key=len, reverse=True
+)
 
 _STEP_MODE_BY_LETTER = {
     "F": StepMode.FULL,
@@ -255,7 +281,7 @@ class DPCLProtocol:
         if token.startswith("W"):
             return self._step_mode(token)
         if token.startswith("G"):
-            return self._geo_command(token)
+            return self._gpm_command(token)
 
         code, arg = token[0], token[1:]
 
@@ -401,65 +427,41 @@ class DPCLProtocol:
         self.device.tilt.set_target_position(tilt_pos)
         return self._ok()
 
-    # -- rastreamento de antena por GPS (extensão própria deste simulador) --
+    # -- Geo Pointing Module (GPM) — Capítulo 17 do manual real ---------------
     #
-    # Prefixo G, inspirado no que a documentação da FLIR aparenta usar
-    # para o módulo de apontamento geográfico (PTU-DGPM) — mas os nomes
-    # exatos abaixo (GO/GX/GE/GD/GA) NÃO são a sintaxe oficial GLLA/GPRY,
-    # que não pôde ser confirmada nesta sessão. Ver docs/PROTOCOL.md e
-    # pantiltsim/tracking.py para a matemática (WGS84/ECEF/ENU) e o
-    # racional completo.
-    def _geo_command(self, token: str) -> str:
-        code = token[1:2]
-        arg = token[2:]
-
-        if code == "O":
-            return self._geo_point_field("observer", "Ground station", arg)
-        if code == "X":
-            return self._geo_point_field("target", "Tracked target", arg)
-        if code == "E" and arg == "":
-            self.device.geo_tracker.enable()
-            return self._ok()
-        if code == "D" and arg == "":
-            self.device.geo_tracker.disable()
-            return self._ok()
-        if code == "A" and arg == "":
-            return self._geo_query_angles()
-
+    # Comandos confirmados byte a byte contra fotos das páginas 99 e 111 do
+    # "E Series Pan-Tilt Command Reference Manual, Version 6.00 (09/2014)":
+    # posição própria da unidade (GL/GO/GA/GLLA, seção 17.3) e orientação
+    # própria (GR/GP/GY/GRPY/GCP, seção 17.4). O exemplo do manual mostra
+    # que tanto a consulta quanto a definição respondem com o valor atual
+    # formatado em 6 casas decimais — diferente do "*\r\n" seco usado pelos
+    # comandos PP/TP de posição de eixo. Ver pantiltsim/tracking.py
+    # (GpmPose) e docs/PROTOCOL.md para o detalhamento e as fontes.
+    def _gpm_command(self, token: str) -> str:
+        for code in _GPM_CODES_BY_LENGTH:
+            if token.startswith(code):
+                arg = token[len(code):]
+                if code in _GPM_COMBINED_FIELDS:
+                    return self._gpm_combined(arg, _GPM_COMBINED_FIELDS[code])
+                return self._gpm_single(arg, _GPM_SINGLE_FIELDS[code])
         raise ProtocolError(f"Unknown command '{token}'")
 
-    def _geo_point_field(self, which: str, label: str, arg: str) -> str:
-        tracker = self.device.geo_tracker
-        if arg == "":
-            point = tracker.state.observer if which == "observer" else tracker.state.target
-            if point is None:
-                raise ProtocolError(f"{label} position not set")
-            value = f"{point.lat_deg},{point.lon_deg},{point.alt_m}"
-            return self._value(value, f"{label} position (lat,lon,alt) is")
+    def _gpm_single(self, arg: str, field: str) -> str:
+        pose = self.device.gpm_pose
+        if arg != "":
+            setattr(pose, field, self._parse_float(arg))
+        return f"* {getattr(pose, field):.6f}\r\n"
 
-        parts = arg.split(",")
-        if len(parts) != 3:
-            raise ProtocolError(f"Expected <lat>,<lon>,<alt>, got '{arg}'")
-        lat, lon, alt = (self._parse_float(p) for p in parts)
-        if not -90.0 <= lat <= 90.0:
-            raise ProtocolError(f"Latitude out of range: {lat}")
-        if not -180.0 <= lon <= 180.0:
-            raise ProtocolError(f"Longitude out of range: {lon}")
-
-        point = GeoPoint(lat_deg=lat, lon_deg=lon, alt_m=alt)
-        if which == "observer":
-            tracker.set_observer(point)
-        else:
-            tracker.set_target(point)
-        return self._ok()
-
-    def _geo_query_angles(self) -> str:
-        tracker = self.device.geo_tracker
-        if tracker.state.observer is None or tracker.state.target is None:
-            raise ProtocolError("Set GO (ground station) and GX (target) first")
-        look = look_angles(tracker.state.observer, tracker.state.target)
-        value = f"{look.azimuth_deg:.4f},{look.elevation_deg:.4f},{look.range_m:.1f}"
-        return self._value(value, "Azimuth,Elevation,Range is")
+    def _gpm_combined(self, arg: str, fields: tuple[str, ...]) -> str:
+        pose = self.device.gpm_pose
+        if arg != "":
+            parts = arg.split(",")
+            if len(parts) != len(fields):
+                raise ProtocolError(f"Expected {len(fields)} comma-separated values, got '{arg}'")
+            for field, part in zip(fields, parts):
+                setattr(pose, field, self._parse_float(part))
+        values = (getattr(pose, field) for field in fields)
+        return "* " + ",".join(f"{value:.6f}" for value in values) + "\r\n"
 
     def _set_host_port(self, token: str) -> str:
         """Comando ``@(baud,0,F)``: configura a porta serial do host."""

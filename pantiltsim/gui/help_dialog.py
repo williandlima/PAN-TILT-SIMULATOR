@@ -285,8 +285,8 @@ def _test_modes() -> str:
     <pre>pip install -e ".[dev]"
 pytest</pre>
     <p>
-      No Linux, 68 testes passam. No Windows o resultado correto é
-      <b>61 passed, 7 skipped</b>: os 7 testes ponta a ponta usam PTYs, que só
+      No Linux, 71 testes passam. No Windows o resultado correto é
+      <b>64 passed, 7 skipped</b>: os 7 testes ponta a ponta usam PTYs, que só
       existem em sistemas POSIX.
     </p>
 
@@ -305,39 +305,78 @@ pytest</pre>
 
 def _antenna_tracking() -> str:
     return """
-    <h2>Rastreamento de antena por GPS (antenna tracking)</h2>
+    <h2>Geo Pointing Module e rastreamento de antena por GPS</h2>
     <p class="lead">
-      A funcionalidade mais avançada do simulador: apontamento automático
-      a partir de posições GPS reais, com geodesia completa.
+      Duas coisas distintas, que não devem ser confundidas: o Geo Pointing
+      Module (GPM) real da FLIR — confirmado byte a byte contra o manual
+      oficial — e uma demonstração deste simulador de rastreamento
+      contínuo de um alvo em movimento, que <b>não</b> é esse recurso.
     </p>
 
-    <h3>O que é</h3>
+    <h3>1. Geo Pointing Module (GPM) — comandos reais e confirmados</h3>
     <p>
-      Uma estação de solo com pan-tilt aponta continuamente uma antena
-      (de telemetria, ou uma antena helicoidal como a que este simulador
-      desenha) na direção de um veículo — aeronave, drone, balão de
-      sondagem, foguete de teste — a partir da posição GPS que <b>o
-      próprio veículo transmite por telemetria</b>. É exatamente o mesmo
-      princípio das estações terrenas que seguem satélites.
+      O PTU-D300E (como toda a linha E-Series) tem, de fábrica, um recurso
+      chamado <b>Geo Pointing Module</b>: a unidade guarda sua própria pose
+      geográfica — latitude, longitude, altitude, roll, pitch, yaw — para
+      poder converter coordenadas geográficas em ângulos de pan/tilt.
+      Isto é o <b>Capítulo 17</b> do "E Series Pan-Tilt Command Reference
+      Manual, Version 6.00 (09/2014)" da FLIR, e os comandos abaixo foram
+      conferidos <b>byte a byte contra fotos das páginas reais do
+      manual</b> (99 e 111), incluindo o formato exato de resposta:
+    </p>
+    <pre>GL              consulta latitude própria      -> * -23.500000
+GL-23.5         define a latitude própria
+GO              consulta longitude própria     -> * -46.600000
+GO-46.6         define a longitude própria
+GA              consulta altitude própria (m)  -> * 760.000000
+GA760           define a altitude própria
+GLLA            consulta os 3 juntos           -> * -23.500000,-46.600000,760.000000
+GLLA-23.5,-46.6,760   define os 3 juntos
+
+GR / GP / GY    consulta/define roll/pitch/yaw próprios, em graus
+GRPY            consulta/define os 3 juntos (mesmo formato de GLLA)
+GCP             consulta/define o offset de pitch da câmera (payload)</pre>
+    <p>
+      Repare: <b>consulta e definição sempre respondem com o valor atual
+      formatado em 6 casas decimais</b> — diferente do <code>*\\r\\n</code>
+      seco que os comandos de posição de eixo (<code>PP</code>/<code>TP</code>)
+      usam ao definir. Isso é exatamente o que o exemplo do manual mostra.
+    </p>
+    <p>
+      Isto é a pose <b>da própria unidade</b> — onde ela está instalada —,
+      não a de um alvo. A FLIR documenta que o uso pretendido exige
+      calibração prévia (apontar para pontos de referência conhecidos) e é
+      para <b>instalações fixas</b>, explicitamente <b>não recomendado
+      para plataformas móveis</b> (aeronave, veículo). Use a aba
+      "Rastreamento GPS" → grupo <b>"Posição própria da unidade"</b> para
+      testar esses comandos pela GUI.
+    </p>
+
+    <h3>2. Rastreamento contínuo de um alvo — recurso deste simulador, não um comando DPCL</h3>
+    <p>
+      Uma estação de solo com pan-tilt aponta continuamente uma antena na
+      direção de um veículo — aeronave, drone, balão de sondagem, foguete
+      de teste — a partir da posição GPS que <b>o próprio veículo
+      transmite por telemetria</b>. É o mesmo princípio das estações
+      terrenas que seguem satélites, mas <b>nenhuma fonte confirmou um
+      comando ASCII da FLIR para isso</b> — a família GPM, como visto
+      acima, é sobre a pose fixa e calibrada da própria unidade, não sobre
+      seguir um alvo móvel.
     </p>
     <p>
       <b>Importante:</b> isto não é orientação de armas nem rastreamento
-      ativo de um alvo não cooperativo. O sistema só sabe apontar para
+      ativo de um alvo não cooperativo. O cálculo só sabe apontar para
       onde um receptor GPS <i>a bordo do próprio veículo</i> diz que ele
       está — a mesma função que uma parabólica de estação terrena faz ao
       seguir um satélite.
     </p>
     <p>
-      <b>Isto não é o recurso Geo-Pointing (GPM) da FLIR.</b> A FLIR tem,
-      sim, um recurso oficial embutido nas unidades E-Series com esse
-      nome — mas ele roda pela interface Ethernet/IP da unidade (não pelo
-      protocolo serial ASCII usado aqui), exige uma calibração prévia
-      apontando para 4+ pontos de referência conhecidos, e a própria FLIR
-      documenta que ele é para <b>instalações fixas</b> — explicitamente
-      <b>não recomendado para plataformas móveis</b> (aeronave, veículo).
-      Este módulo do simulador modela o conceito correlato, porém
-      distinto, de uma estação de rastreamento contínuo por telemetria —
-      ver <code>docs/PROTOCOL.md</code> para as fontes.
+      Por isso este recurso é exposto <b>só pela GUI/API Python</b> do
+      simulador (<code>device.geo_tracker</code>), nunca como comando de
+      fio — evitando inventar mais sintaxe DPCL não confirmada, erro já
+      cometido numa versão anterior desta funcionalidade (que usava
+      <code>GO</code>/<code>GX</code>/<code>GE</code>/<code>GD</code>, e
+      chegou a colidir com os nomes reais confirmados depois).
     </p>
 
     <h3>A matemática por trás</h3>
@@ -357,14 +396,15 @@ def _antenna_tracking() -> str:
     <p>
       É o método padrão de rastreamento de antena (o mesmo do Gpredict e
       de estações terrenas de satélite) — não uma aproximação de Terra
-      plana. Implementado em <code>pantiltsim/tracking.py</code>.
+      plana. Implementado em <code>pantiltsim/tracking.py</code>
+      (<code>look_angles</code>).
     </p>
 
     <h3>Usando pela aba "Rastreamento GPS"</h3>
     <table>
       <tr><th>Passo</th><th>O que fazer</th></tr>
-      <tr><td>1</td><td>Preencha latitude/longitude/altitude da <b>estação de solo</b> e clique em <b>Definir estação (GO)</b>.</td></tr>
-      <tr><td>2</td><td>Preencha a posição do <b>alvo</b> e clique em <b>Definir alvo (GX)</b> — ou use a trajetória de demonstração abaixo.</td></tr>
+      <tr><td>1</td><td>Preencha latitude/longitude/altitude em <b>"Posição própria da unidade"</b> e clique em <b>Definir posição (GLLA)</b> — comando DPCL real.</td></tr>
+      <tr><td>2</td><td>Preencha a posição do <b>alvo</b> e clique em <b>Definir alvo</b> — ou use a trajetória de demonstração abaixo (não são comandos DPCL).</td></tr>
       <tr><td>3</td><td>Marque <b>Habilitar rastreamento automático</b>: a cada atualização de alvo, o pan-tilt já se move para o novo apontamento.</td></tr>
       <tr><td>4</td><td>Acompanhe azimute, elevação e distância calculados no painel "Apontamento calculado".</td></tr>
     </table>
@@ -372,25 +412,6 @@ def _antenna_tracking() -> str:
       A <b>trajetória de demonstração</b> simula o feed de GPS de um
       veículo com rumo, velocidade e taxa de subida constantes — útil
       para ver o rastreamento em ação sem hardware GPS real.
-    </p>
-
-    <h3>Pelos comandos DPCL</h3>
-    <pre>GO-23.5,-46.6,760     define a estação de solo
-GX-22.9,-43.2,0       define/atualiza o alvo (dispara o apontamento se GE estiver ligado)
-GE                    habilita o rastreamento automático
-GD                    desabilita
-GA                    consulta azimute,elevação,distância</pre>
-    <p>
-      <b>Atenção:</b> os comandos <code>G...</code> são uma
-      <b>extensão própria deste simulador</b>, sem correspondência oficial
-      confirmada em nenhum manual FLIR acessado — nem os nomes
-      (<code>GLLA</code>/<code>GPRY</code> nunca foram encontrados em
-      nenhuma fonte) nem o transporte (o Geo-Pointing real da FLIR usa
-      Ethernet, não serial ASCII). A matemática de apontamento (WGS84,
-      ECEF/ENU) é real e correta; o protocolo que a expõe aqui é didático,
-      pensado para caber no mesmo terminal DPCL do resto do simulador.
-      Ver <code>docs/PROTOCOL.md</code> para as fontes usadas nesta
-      verificação.
     </p>
     """
 
@@ -455,18 +476,22 @@ def _command_reference() -> str:
       <tr><td><code>DS</code> / <code>DR</code> / <code>DF</code></td><td>Salvar / restaurar / padrões de fábrica</td></tr>
     </table>
 
-    <h3>Rastreamento de antena por GPS (extensão do simulador)</h3>
+    <h3>Geo Pointing Module (confirmado byte a byte contra o manual real)</h3>
     <table>
       <tr><th>Comando</th><th>Faz</th></tr>
-      <tr><td><code>GO&lt;lat&gt;,&lt;lon&gt;,&lt;alt&gt;</code></td><td>Define/consulta a posição da estação de solo</td></tr>
-      <tr><td><code>GX&lt;lat&gt;,&lt;lon&gt;,&lt;alt&gt;</code></td><td>Define/consulta a posição do alvo (dispara o apontamento se habilitado)</td></tr>
-      <tr><td><code>GE</code> / <code>GD</code></td><td>Habilita / desabilita o rastreamento automático</td></tr>
-      <tr><td><code>GA</code></td><td>Consulta azimute, elevação e distância calculados</td></tr>
+      <tr><td><code>GL</code> / <code>GO</code> / <code>GA</code></td><td>Latitude / longitude / altitude (m) próprias da unidade</td></tr>
+      <tr><td><code>GLLA</code></td><td>Latitude,longitude,altitude próprias, juntas</td></tr>
+      <tr><td><code>GR</code> / <code>GP</code> / <code>GY</code></td><td>Roll / pitch / yaw próprios da unidade, em graus</td></tr>
+      <tr><td><code>GRPY</code></td><td>Roll,pitch,yaw próprios, juntos</td></tr>
+      <tr><td><code>GCP</code></td><td>Offset de pitch da câmera/payload</td></tr>
     </table>
     <p>
-      Ver o tópico <b>Rastreamento de antena por GPS</b> nesta ajuda para o
-      funcionamento completo. Sintaxe própria do simulador — não confirmada
-      contra o manual oficial do acessório PTU-DGPM.
+      Consulta e definição sempre respondem <code>* &lt;valor&gt;</code>
+      com 6 casas decimais (combinados: valores separados por vírgula).
+      Ver o tópico <b>Geo Pointing Module e rastreamento de antena por
+      GPS</b> nesta ajuda para o detalhamento — inclui também a
+      demonstração de rastreamento contínuo de um alvo em movimento, que
+      <b>não</b> é um comando DPCL (só GUI/API Python).
     </p>
 
     <h3>Abertura recomendada, no seu software</h3>
@@ -487,7 +512,7 @@ _TOPICS = [
     ("O núcleo do projeto", _core_concepts),
     ("A interface", lambda device: _interface_guide()),
     ("Modos de teste", lambda device: _test_modes()),
-    ("Rastreamento de antena por GPS", lambda device: _antenna_tracking()),
+    ("Geo Pointing Module e rastreamento GPS", lambda device: _antenna_tracking()),
     ("Comandos DPCL", lambda device: _command_reference()),
 ]
 
@@ -556,11 +581,12 @@ def terminal_help_text(device: PanTiltDevice) -> str:
         "  ED / EE   eco off / on          FT / FV   feedback terso / verboso\n"
         "  V         versão                B         B<pan>,<tilt>,<vp>,<vt>\n"
         "\n"
-        "  -- rastreamento de antena por GPS (extensão do simulador) --\n"
-        "  GO<lat>,<lon>,<alt>   define a estação de solo\n"
-        "  GX<lat>,<lon>,<alt>   define/atualiza o alvo\n"
-        "  GE / GD   habilita / desabilita o rastreamento automático\n"
-        "  GA        consulta azimute,elevação,distância\n"
+        "  -- Geo Pointing Module (Cap. 17 do manual, confirmado byte a byte) --\n"
+        "  GL / GO / GA   latitude / longitude / altitude(m) próprias\n"
+        "  GLLA           os 3 juntos, separados por vírgula\n"
+        "  GR / GP / GY   roll / pitch / yaw próprios (graus)\n"
+        "  GRPY           os 3 juntos       GCP   offset de pitch da câmera\n"
+        "  (rastreamento contínuo de alvo em movimento: aba GUI, não é comando DPCL)\n"
         "\n"
         "Digite ?? para abrir a janela de ajuda completa (ou tecle F1).\n"
         "───────────────────────────────────────────────"

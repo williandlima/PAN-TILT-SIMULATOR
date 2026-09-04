@@ -169,8 +169,8 @@ pytest
 Saída esperada:
 
 ```
-....................................................................     [100%]
-68 passed in 14.92s
+.......................................................................  [100%]
+71 passed in 10.55s
 ```
 
 O que cada arquivo cobre:
@@ -178,11 +178,11 @@ O que cada arquivo cobre:
 | Arquivo | Cobertura |
 |---------|-----------|
 | `tests/test_device.py` | Física do movimento, limites, micropasso, modos de controle |
-| `tests/test_protocol.py` | Cada comando e os formatos exatos de resposta, incluindo `GO`/`GX`/`GE`/`GD`/`GA` |
+| `tests/test_protocol.py` | Cada comando e os formatos exatos de resposta, incluindo os comandos reais do Geo Pointing Module (`GL`/`GO`/`GA`/`GLLA`/`GR`/`GP`/`GY`/`GRPY`/`GCP`) |
 | `tests/test_tracking.py` | Geodesia WGS84 do rastreamento de antena por GPS (azimute/elevação/distância) |
 | `tests/test_end_to_end_serial.py` | Transporte + protocolo + movimento **por uma porta serial real** |
 
-**No Windows o resultado é `61 passed, 7 skipped`**, e está correto: os 7 testes
+**No Windows o resultado é `64 passed, 7 skipped`**, e está correto: os 7 testes
 ponta a ponta usam PTYs, que só existem em Linux/macOS, então são pulados. Para
 cobrir esse caminho no Windows, use o par de portas virtuais do com0com
 (seção 3.4). Pelo mesmo motivo, o autoteste da seção 3.1 não roda no Windows —

@@ -362,8 +362,9 @@ class PanTiltDevice:
 
         # Import tardio para evitar dependência circular (tracking.py usa
         # apenas o dispositivo pelo lado de fora, não o contrário).
-        from .tracking import GeoTracker
+        from .tracking import GeoTracker, GpmPose
 
+        self.gpm_pose = GpmPose()
         self.geo_tracker = GeoTracker(self)
 
     # ------------------------------------------------------------------
@@ -512,8 +513,14 @@ class PanTiltDevice:
                 "slaved": self.slaved_execution,
                 "echo": self.echo_enabled,
                 "verbose": self.verbose_feedback,
+                "gpm_latitude_deg": self.gpm_pose.latitude_deg,
+                "gpm_longitude_deg": self.gpm_pose.longitude_deg,
+                "gpm_altitude_m": self.gpm_pose.altitude_m,
+                "gpm_roll_deg": self.gpm_pose.roll_deg,
+                "gpm_pitch_deg": self.gpm_pose.pitch_deg,
+                "gpm_yaw_deg": self.gpm_pose.yaw_deg,
+                "gpm_camera_pitch_offset_deg": self.gpm_pose.camera_pitch_offset_deg,
                 "geo_tracking": self.geo_tracker.state.enabled,
-                "geo_observer": self.geo_tracker.state.observer,
                 "geo_target": self.geo_tracker.state.target,
                 "geo_look": self.geo_tracker.state.last_look,
             }

@@ -265,81 +265,106 @@ def test_cr_and_lf_terminators_are_accepted(ptu):
     assert device.pan.target_position == 200
 
 
-# -- rastreamento de antena por GPS (comandos GO/GX/GE/GD/GA, extensão do simulador) --
-def test_geo_set_and_query_observer_and_target(ptu):
+# -- Geo Pointing Module: GL/GO/GA/GLLA (posição) e GR/GP/GY/GRPY/GCP
+# (orientação) — confirmados byte a byte contra fotos das páginas 99 e 111
+# do "E Series Pan-Tilt Command Reference Manual, Version 6.00 (09/2014)".
+def test_gpm_position_query_and_set(ptu):
     device, protocol = ptu
-    assert protocol.execute_line("GO-23.5,-46.6,760").startswith("*")
-    assert protocol.execute_line("GX-22.9,-43.2,0").startswith("*")
+    assert protocol.execute_line("GL-23.5") == "* -23.500000\r\n"
+    assert protocol.execute_line("GO-46.6") == "* -46.600000\r\n"
+    assert protocol.execute_line("GA760") == "* 760.000000\r\n"
+    assert protocol.execute_line("GL") == "* -23.500000\r\n"
+    assert device.gpm_pose.latitude_deg == -23.5
+    assert device.gpm_pose.longitude_deg == -46.6
+    assert device.gpm_pose.altitude_m == 760.0
 
-    response = protocol.execute_line("GO")
-    assert "-23.5" in response and "-46.6" in response and "760" in response
 
-
-def test_geo_query_before_set_is_an_error(ptu):
+def test_gpm_combined_position(ptu):
+    # "GLLA<lat,lon,alt>" -> "* lat,lon,alt" com 6 casas decimais (formato do manual).
     _, protocol = ptu
-    assert protocol.execute_line("GO").startswith("!")
-    assert protocol.execute_line("GA").startswith("!")
+    assert protocol.execute_line("GLLA") == "* 0.000000,0.000000,0.000000\r\n"
+    assert protocol.execute_line("GLLA-23.5,-46.6,760") == "* -23.500000,-46.600000,760.000000\r\n"
 
 
-def test_geo_rejects_invalid_latitude(ptu):
+def test_gpm_orientation_matches_manual_worked_example(ptu):
+    """Reproduz o exemplo da seção 17.4.3 do manual (página 111, foto real)."""
+    device, protocol = ptu
+    device.gpm_pose.roll_deg = -1.459233
+    device.gpm_pose.pitch_deg = 3.103816
+    device.gpm_pose.yaw_deg = 50.042890
+
+    assert protocol.execute_line("GR") == "* -1.459233\r\n"
+    assert protocol.execute_line("GP") == "* 3.103816\r\n"
+    assert protocol.execute_line("GY") == "* 50.042890\r\n"
+    assert protocol.execute_line("GRPY") == "* -1.459233,3.103816,50.042890\r\n"
+
+    assert protocol.execute_line("GRPY-1.2,3.2,50") == "* -1.200000,3.200000,50.000000\r\n"
+
+    protocol.execute_line("GR-1.5")
+    protocol.execute_line("GY20")
+    assert protocol.execute_line("GRPY") == "* -1.500000,3.200000,20.000000\r\n"
+
+
+def test_gpm_camera_pitch_offset_matches_manual_example(ptu):
     _, protocol = ptu
-    assert protocol.execute_line("GO95,0,0").startswith("!")
+    assert protocol.execute_line("GCP") == "* 0.000000\r\n"
+    assert protocol.execute_line("GCP10.3") == "* 10.300000\r\n"
 
 
-def test_geo_rejects_malformed_value(ptu):
+def test_gpm_rejects_malformed_value(ptu):
     _, protocol = ptu
-    assert protocol.execute_line("GOnotanumber,0,0").startswith("!")
-    assert protocol.execute_line("GO0,0").startswith("!")  # faltam campos
+    assert protocol.execute_line("GLnotanumber").startswith("!")
+    assert protocol.execute_line("GLLA0,0").startswith("!")  # faltam campos
 
 
-def test_geo_angles_query_matches_look_angles(ptu):
-    from pantiltsim.tracking import GeoPoint, look_angles
+def test_gpm_unknown_command_is_an_error(ptu):
+    _, protocol = ptu
+    assert protocol.execute_line("GZ").startswith("!")
+
+
+# -- rastreamento de antena por GPS: recurso de GUI/API deste simulador,
+# não um comando DPCL (ver pantiltsim/tracking.py). Usa device.gpm_pose
+# (definida pelos comandos GPM reais acima) como estação de solo.
+def test_geo_tracker_uses_gpm_pose_as_observer(ptu):
+    from pantiltsim.tracking import GeoPoint
 
     device, protocol = ptu
-    protocol.execute_line("GO0,0,0")
-    protocol.execute_line("GX0,1,0")
+    protocol.execute_line("GLLA0,0,0")  # posição própria via comando real
+    device.geo_tracker.enable()
+    device.geo_tracker.set_target(GeoPoint(lat_deg=0.0, lon_deg=1.0, alt_m=0.0))
 
-    response = protocol.execute_line("GA")
-    assert response.startswith("*")
-
-    expected = look_angles(GeoPoint(0, 0, 0), GeoPoint(0, 1, 0))
-    az_str, el_str, range_str = response.split("is")[-1].strip().split(",")
-    assert float(az_str) == pytest.approx(expected.azimuth_deg, abs=0.001)
-    assert float(el_str) == pytest.approx(expected.elevation_deg, abs=0.001)
+    pan_deg = device.pan.counts_to_deg(device.pan.target_position)
+    assert pan_deg == pytest.approx(90.0, abs=0.5)
 
 
-def test_geo_enable_disable_tracking_moves_and_stops_following(ptu):
-    device, protocol = ptu
-    protocol.execute_line("GO0,0,0")
-    protocol.execute_line("GX0,1,0")
+def test_geo_tracker_disabled_by_default_does_not_move(ptu):
+    from pantiltsim.tracking import GeoPoint
 
-    protocol.execute_line("GE")
-    pan_when_enabled = device.pan.target_position
-    assert pan_when_enabled != 0
-
-    protocol.execute_line("GD")
-    protocol.execute_line("GX1,0,0")  # alvo mudou, mas tracking está desligado
-    assert device.pan.target_position == pan_when_enabled  # não seguiu
+    device, _ = ptu
+    device.geo_tracker.set_target(GeoPoint(lat_deg=0.0, lon_deg=1.0, alt_m=0.0))
+    assert device.pan.target_position == 0  # tracking nunca foi habilitado
 
 
 def test_geo_tracking_state_reported_in_snapshot(ptu):
-    device, protocol = ptu
-    protocol.execute_line("GO0,0,0")
-    protocol.execute_line("GX0,1,0")
-    protocol.execute_line("GE")
+    from pantiltsim.tracking import GeoPoint
+
+    device, _ = ptu
+    device.geo_tracker.enable()
+    device.geo_tracker.set_target(GeoPoint(lat_deg=0.0, lon_deg=1.0, alt_m=0.0))
 
     snap = device.snapshot()
     assert snap["geo_tracking"] is True
-    assert snap["geo_observer"] is not None
     assert snap["geo_target"] is not None
     assert snap["geo_look"] is not None
+    assert snap["gpm_latitude_deg"] == 0.0
 
 
 def test_reset_disables_geo_tracking(ptu):
+    from pantiltsim.tracking import GeoPoint
+
     device, protocol = ptu
-    protocol.execute_line("GO0,0,0")
-    protocol.execute_line("GX0,1,0")
-    protocol.execute_line("GE")
+    device.geo_tracker.enable()
+    device.geo_tracker.set_target(GeoPoint(lat_deg=0.0, lon_deg=1.0, alt_m=0.0))
     assert device.geo_tracker.state.enabled is True
 
     protocol.execute_line("RE")

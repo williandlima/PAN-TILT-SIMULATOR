@@ -40,13 +40,18 @@ demonstração visual do comportamento do equipamento.
    movimento trapezoidal, limites de curso realmente aplicados,
    micropasso alterando a resolução, `A` (await) segurando o enlace até o
    movimento terminar.
-7. **Rastreamento de antena por GPS** (`pantiltsim/tracking.py`,
-   comandos `GO`/`GX`/`GE`/`GD`/`GA`): aponta o pan-tilt automaticamente
-   para um alvo (aeronave, drone, foguete de sondagem) a partir da
-   posição GPS da estação de solo e do veículo, com geodesia WGS84
-   completa (geodésico → ECEF → ENU) — o mesmo método usado por estações
-   terrenas de rastreamento de satélite. Aba dedicada na GUI, com
-   trajetória de demonstração para ver o rastreamento em ação sem
+7. **Geo Pointing Module (GPM)** — comandos reais `GL`/`GO`/`GA`/`GLLA`
+   (posição própria da unidade) e `GR`/`GP`/`GY`/`GRPY`/`GCP`
+   (orientação própria), **confirmados byte a byte** contra fotos do
+   Capítulo 17 do manual oficial da FLIR. Por cima disso, uma
+   **demonstração de rastreamento contínuo de antena por GPS/telemetria**
+   (`pantiltsim/tracking.py`, `device.geo_tracker`) — aponta o pan-tilt
+   automaticamente para um alvo em movimento (aeronave, drone, foguete de
+   sondagem) a partir da posição GPS da estação de solo e do veículo, com
+   geodesia WGS84 completa (geodésico → ECEF → ENU); **não é** um comando
+   DPCL, é um recurso de GUI/API deste simulador, já que o GPM real não
+   documenta um comando para rastrear alvos móveis. Aba dedicada na GUI,
+   com trajetória de demonstração para ver o rastreamento em ação sem
    hardware GPS real — ver [`docs/PROTOCOL.md`](docs/PROTOCOL.md).
 
 ## Instalação
@@ -173,14 +178,15 @@ pip install -e ".[dev]"
 pytest
 ```
 
-68 testes, em quatro níveis:
+71 testes, em quatro níveis:
 
 - `tests/test_device.py` — física do movimento, limites, micropasso,
   modos.
 - `tests/test_protocol.py` — cada comando e os formatos de resposta,
   incluindo os offsets exatos que os drivers reais usam para fatiar as
-  respostas verbosas, e os comandos `GO`/`GX`/`GE`/`GD`/`GA` de
-  rastreamento por GPS.
+  respostas verbosas, e os comandos reais do Geo Pointing Module
+  (`GL`/`GO`/`GA`/`GLLA`/`GR`/`GP`/`GY`/`GRPY`/`GCP`), com um teste que
+  reproduz literalmente o exemplo do manual oficial.
 - `tests/test_tracking.py` — a geodesia WGS84 do rastreamento de antena
   (conversão geodésico → ECEF → ENU, azimute/elevação/distância) contra
   casos de referência conferidos à mão.
