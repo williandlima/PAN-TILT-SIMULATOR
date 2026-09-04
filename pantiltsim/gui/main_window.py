@@ -386,22 +386,20 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(page)
 
         intro = QLabel(
-            "Duas coisas distintas nesta aba: (1) a posição própria da unidade "
-            "— comandos reais <b>GL/GO/GA/GLLA</b> do Geo Pointing Module da "
-            "FLIR (Capítulo 17 do manual, confirmados byte a byte) — e (2) uma "
-            "demonstração deste simulador de rastreamento contínuo de um alvo "
-            "em movimento por GPS/telemetria, que <b>não é um comando DPCL</b> "
-            "(nenhuma fonte confirma esse comando na família GPM — pelo "
-            "contrário, a FLIR documenta o GPM como não recomendado para "
-            "plataformas móveis). A matemática (WGS84 completa: geodésico → "
-            "ECEF → ENU) é real; só o apontamento contínuo é um recurso de "
-            "GUI/API deste simulador. Ver Ajuda → Comandos DPCL e "
-            "docs/PROTOCOL.md."
+            "Geo Pointing Module (GPM) — Capítulo 17 do manual real da FLIR, "
+            "confirmado byte a byte: <b>GLLA</b> define a posição própria da "
+            "unidade (onde está instalada); <b>GG</b> aponta o PTU para uma "
+            "coordenada agora (ação imediata, como PP/TP — não um modo "
+            "liga/desliga). Rastrear um veículo em movimento é chamar "
+            "<b>GG</b> de novo a cada posição de GPS recebida — é isso que a "
+            "trajetória de demonstração abaixo faz. Matemática WGS84 completa "
+            "(geodésico → ECEF → ENU). Ver Ajuda → Comandos DPCL e "
+            "docs/PROTOCOL.md para as fontes."
         )
         intro.setWordWrap(True)
         layout.addWidget(intro)
 
-        observer_box = QGroupBox("Posição própria da unidade (GPM — GL/GO/GA/GLLA)")
+        observer_box = QGroupBox("Posição própria da unidade (GLLA)")
         observer_form = QFormLayout(observer_box)
         self.observer_lat_spin = self._make_geo_spin(-90.0, 90.0)
         self.observer_lon_spin = self._make_geo_spin(-180.0, 180.0)
@@ -414,7 +412,7 @@ class MainWindow(QMainWindow):
         observer_form.addRow(set_observer_btn)
         layout.addWidget(observer_box)
 
-        target_box = QGroupBox("Alvo (demonstração de rastreamento — recurso da GUI)")
+        target_box = QGroupBox("Alvo — aponte o PTU agora (GG)")
         target_form = QFormLayout(target_box)
         self.target_lat_spin = self._make_geo_spin(-90.0, 90.0)
         self.target_lon_spin = self._make_geo_spin(-180.0, 180.0)
@@ -422,7 +420,7 @@ class MainWindow(QMainWindow):
         target_form.addRow("Latitude:", self.target_lat_spin)
         target_form.addRow("Longitude:", self.target_lon_spin)
         target_form.addRow("Altitude:", self.target_alt_spin)
-        set_target_btn = QPushButton("Definir alvo")
+        set_target_btn = QPushButton("Apontar (GG)")
         set_target_btn.clicked.connect(self._send_set_target)
         target_form.addRow(set_target_btn)
         layout.addWidget(target_box)
@@ -452,11 +450,7 @@ class MainWindow(QMainWindow):
         demo_form.addRow(self.demo_btn)
         layout.addWidget(demo_box)
 
-        self.geo_enable_check = QCheckBox("Habilitar rastreamento automático")
-        self.geo_enable_check.toggled.connect(self._toggle_geo_tracking)
-        layout.addWidget(self.geo_enable_check)
-
-        geo_status_box = QGroupBox("Apontamento calculado")
+        geo_status_box = QGroupBox("Apontamento atual (GG)")
         geo_grid = QGridLayout(geo_status_box)
         self.geo_labels: dict[str, QLabel] = {}
         for row, (title, key) in enumerate(
@@ -625,21 +619,11 @@ class MainWindow(QMainWindow):
         self._send_local(f"GLLA{lat},{lon},{alt}")
 
     def _send_set_target(self) -> None:
-        """Não é um comando DPCL: chama o rastreador de demonstração direto."""
-        point = GeoPoint(
-            lat_deg=self.target_lat_spin.value(),
-            lon_deg=self.target_lon_spin.value(),
-            alt_m=self.target_alt_spin.value(),
-        )
-        self.device.geo_tracker.set_target(point)
-
-    def _toggle_geo_tracking(self, checked: bool) -> None:
-        if self._updating_widgets:
-            return
-        if checked:
-            self.device.geo_tracker.enable()
-        else:
-            self.device.geo_tracker.disable()
+        """Comando real GG<lat,lon,alt> — aponta o PTU para a coordenada agora."""
+        lat = self.target_lat_spin.value()
+        lon = self.target_lon_spin.value()
+        alt = self.target_alt_spin.value()
+        self._send_local(f"GG{lat},{lon},{alt}")
 
     def _toggle_demo_trajectory(self) -> None:
         if self._demo_trajectory is None:
@@ -676,7 +660,7 @@ class MainWindow(QMainWindow):
         finally:
             self._updating_widgets = False
 
-        self.device.geo_tracker.set_target(point)
+        self._send_local(f"GG{point.lat_deg},{point.lon_deg},{point.alt_m}")
 
     def _send_typed_command(self) -> None:
         text = self.command_input.text().strip()
@@ -753,8 +737,6 @@ class MainWindow(QMainWindow):
                 self.verbose_check.setChecked(snap["verbose"])
             if self.slaved_check.isChecked() != snap["slaved"]:
                 self.slaved_check.setChecked(snap["slaved"])
-            if self.geo_enable_check.isChecked() != snap["geo_tracking"]:
-                self.geo_enable_check.setChecked(snap["geo_tracking"])
             self._sync_combo(self.control_mode_combo, "CV" if snap["control_mode"] == "velocity" else "CI")
             self._sync_combo(
                 self.limit_mode_combo,

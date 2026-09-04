@@ -50,6 +50,7 @@ import re
 import time
 
 from .device import ControlMode, LimitMode, PanTiltDevice, PowerMode, StepMode
+from .tracking import GeoPoint, Landmark, look_angles
 
 log = logging.getLogger(__name__)
 
@@ -59,7 +60,8 @@ _BAUD_RE = re.compile(r"^@\((\d+),(\d+),([A-Z])\)$")
 # Geo Pointing Module (Capítulo 17 do E Series Command Reference Manual,
 # v6.00 09/2014) — campos confirmados byte a byte contra o manual real.
 # Ordenados do mais longo para o mais curto: como o valor vem colado ao
-# código (ex.: "GLLA-23.5,..."), é preciso casar "GLLA" antes de "GL".
+# código (ex.: "GLLA-23.5,..."), é preciso casar "GLLA" antes de "GL", e
+# "GGD"/"GMA"/"GMN"/"GMD"/"GMC" antes de "GG"/"GM".
 _GPM_SINGLE_FIELDS = {
     "GL": "latitude_deg",
     "GO": "longitude_deg",
@@ -73,8 +75,15 @@ _GPM_COMBINED_FIELDS = {
     "GLLA": ("latitude_deg", "longitude_deg", "altitude_m"),
     "GRPY": ("roll_deg", "pitch_deg", "yaw_deg"),
 }
+_GPM_AIM_CODES = ("GGD", "GG")
+_GPM_LANDMARK_CODES = ("GMA", "GMN", "GMD", "GMC", "GM")
 _GPM_CODES_BY_LENGTH = sorted(
-    list(_GPM_SINGLE_FIELDS) + list(_GPM_COMBINED_FIELDS), key=len, reverse=True
+    list(_GPM_SINGLE_FIELDS)
+    + list(_GPM_COMBINED_FIELDS)
+    + list(_GPM_AIM_CODES)
+    + list(_GPM_LANDMARK_CODES),
+    key=len,
+    reverse=True,
 )
 
 _STEP_MODE_BY_LETTER = {
@@ -429,23 +438,44 @@ class DPCLProtocol:
 
     # -- Geo Pointing Module (GPM) — Capítulo 17 do manual real ---------------
     #
-    # Comandos confirmados byte a byte contra fotos das páginas 99 e 111 do
-    # "E Series Pan-Tilt Command Reference Manual, Version 6.00 (09/2014)":
-    # posição própria da unidade (GL/GO/GA/GLLA, seção 17.3) e orientação
-    # própria (GR/GP/GY/GRPY/GCP, seção 17.4). O exemplo do manual mostra
-    # que tanto a consulta quanto a definição respondem com o valor atual
-    # formatado em 6 casas decimais — diferente do "*\r\n" seco usado pelos
-    # comandos PP/TP de posição de eixo. Ver pantiltsim/tracking.py
-    # (GpmPose) e docs/PROTOCOL.md para o detalhamento e as fontes.
+    # Comandos confirmados byte a byte contra fotos das páginas 99, 111 e
+    # 113 do "E Series Pan-Tilt Command Reference Manual, Version 6.00
+    # (09/2014)": posição própria da unidade (GL/GO/GA/GLLA, seção 17.3),
+    # orientação própria (GR/GP/GY/GRPY/GCP, seção 17.4) e landmarks/aim
+    # point (GM.../GG/GGD, seção 17.5). Ver pantiltsim/tracking.py
+    # (GpmPose, Landmark, GeoTracker) e docs/PROTOCOL.md para o
+    # detalhamento, as fontes, e o que do capítulo ainda não foi
+    # confirmado (GC/GS/GDR/GT).
     def _gpm_command(self, token: str) -> str:
         for code in _GPM_CODES_BY_LENGTH:
-            if token.startswith(code):
-                arg = token[len(code):]
-                if code in _GPM_COMBINED_FIELDS:
-                    return self._gpm_combined(arg, _GPM_COMBINED_FIELDS[code])
+            if not token.startswith(code):
+                continue
+            arg = token[len(code):]
+            if code in _GPM_COMBINED_FIELDS:
+                return self._gpm_combined(arg, _GPM_COMBINED_FIELDS[code])
+            if code in _GPM_SINGLE_FIELDS:
                 return self._gpm_single(arg, _GPM_SINGLE_FIELDS[code])
+            if code == "GG":
+                return self._gpm_aim(arg)
+            if code == "GGD":
+                return self._gpm_aim_distance(arg)
+            if code == "GM":
+                return self._gpm_landmark_query(arg)
+            if code == "GMA":
+                return self._gpm_landmark_add(arg)
+            if code == "GMN":
+                return f"* {len(self.device.gpm_landmarks)}\r\n"
+            if code == "GMD":
+                return self._gpm_landmark_delete(arg)
+            if code == "GMC":
+                self.device.gpm_landmarks.clear()
+                return self._ok()
         raise ProtocolError(f"Unknown command '{token}'")
 
+    # -- posição/orientação própria: GL/GO/GA/GLLA, GR/GP/GY/GRPY, GCP -------
+    # Consulta E definição sempre respondem com o valor atual formatado em
+    # 6 casas decimais — diferente do "*\r\n" seco dos comandos de posição
+    # de eixo (PP/TP). Confirmado pelo exemplo da seção 17.4.3 do manual.
     def _gpm_single(self, arg: str, field: str) -> str:
         pose = self.device.gpm_pose
         if arg != "":
@@ -462,6 +492,112 @@ class DPCLProtocol:
                 setattr(pose, field, self._parse_float(part))
         values = (getattr(pose, field) for field in fields)
         return "* " + ",".join(f"{value:.6f}" for value in values) + "\r\n"
+
+    # -- aim point: GG (aponta/consulta) e GGD (distância) -------------------
+    # GG é uma ação (como PP/TP): ao definir, responde só "*\r\n", sem
+    # ecoar o valor — diferente de GLLA/GRPY/GCP. A consulta usa 5 casas
+    # decimais (confirmado pelo exemplo "GG * 38.60138,-122.37686,6.00000"
+    # da seção 17.5.3, diferente das 6 casas dos comandos da seção 17.4).
+    def _gpm_aim(self, arg: str) -> str:
+        tracker = self.device.geo_tracker
+        if arg == "":
+            if tracker.state.target is None:
+                raise ProtocolError("No aim point set yet")
+            point = tracker.state.target
+            return f"* {point.lat_deg:.5f},{point.lon_deg:.5f},{point.alt_m:.5f}\r\n"
+
+        parts = arg.split(",")
+        if len(parts) == 1:
+            point = self._landmark_point(self._parse_int(parts[0]))
+        elif len(parts) == 3:
+            lat, lon, alt = (self._parse_float(p) for p in parts)
+            point = GeoPoint(lat_deg=lat, lon_deg=lon, alt_m=alt)
+        else:
+            raise ProtocolError(f"Expected <index> or <lat>,<lon>,<alt>, got '{arg}'")
+
+        tracker.set_target(point)
+        return self._ok()
+
+    def _gpm_aim_distance(self, arg: str) -> str:
+        """GGD — distância (m) até o aim point atual, ou até um ponto informado.
+
+        Formato de resposta (número de casas decimais) não aparece em
+        nenhum exemplo fotografado do manual; usamos 4 casas por
+        consistência com o resto do capítulo, mas isso é uma suposição
+        deste simulador, não uma confirmação.
+        """
+        tracker = self.device.geo_tracker
+        if arg == "":
+            if tracker.state.last_look is None:
+                raise ProtocolError("No aim point set yet")
+            distance = tracker.state.last_look.range_m
+        else:
+            parts = arg.split(",")
+            if len(parts) != 3:
+                raise ProtocolError(f"Expected <lat>,<lon>,<alt>, got '{arg}'")
+            lat, lon, alt = (self._parse_float(p) for p in parts)
+            target = GeoPoint(lat_deg=lat, lon_deg=lon, alt_m=alt)
+            distance = look_angles(tracker.observer(), target).range_m
+        return f"* {distance:.4f}\r\n"
+
+    # -- landmarks: GM/GMA/GMN/GMD/GMC ----------------------------------------
+    def _gpm_landmark_query(self, arg: str) -> str:
+        landmarks = self.device.gpm_landmarks
+        if arg == "":
+            entries = ";".join(
+                self._format_landmark(index, landmark)
+                for index, landmark in enumerate(landmarks)
+            )
+            return f"* {entries}\r\n"
+        index = self._parse_int(arg)
+        landmark = self._landmark_at(index)
+        return f"* {self._format_landmark(index, landmark)}\r\n"
+
+    def _format_landmark(self, index: int, landmark: Landmark) -> str:
+        # Campos confirmados: <index>,<name>,<lat>,<lon>,<alt>,<span
+        # pos>,<tilt pos>,<error>. O erro de mira não é modelado (o
+        # manual não detalha o cálculo) e fica sempre 0.0000.
+        return (
+            f"{index},{landmark.name},{landmark.lat_deg:.4f},{landmark.lon_deg:.4f},"
+            f"{landmark.alt_m:.4f},{landmark.pan_position},{landmark.tilt_position},0.0000"
+        )
+
+    def _gpm_landmark_add(self, arg: str) -> str:
+        parts = arg.split(",")
+        if len(parts) != 4:
+            raise ProtocolError(f"Expected <name>,<lat>,<lon>,<alt>, got '{arg}'")
+        name, lat_text, lon_text, alt_text = parts
+        landmark = Landmark(
+            name=name,
+            lat_deg=self._parse_float(lat_text),
+            lon_deg=self._parse_float(lon_text),
+            alt_m=self._parse_float(alt_text),
+            pan_position=self.device.pan.position,
+            tilt_position=self.device.tilt.position,
+        )
+        self.device.gpm_landmarks.append(landmark)
+        return self._ok()
+
+    def _gpm_landmark_delete(self, arg: str) -> str:
+        landmarks = self.device.gpm_landmarks
+        if arg == "":
+            if landmarks:
+                landmarks.pop()
+        else:
+            index = self._parse_int(arg)
+            self._landmark_at(index)  # valida o índice antes de remover
+            landmarks.pop(index)
+        return self._ok()
+
+    def _landmark_at(self, index: int) -> Landmark:
+        landmarks = self.device.gpm_landmarks
+        if not 0 <= index < len(landmarks):
+            raise ProtocolError(f"Unknown landmark index {index}")
+        return landmarks[index]
+
+    def _landmark_point(self, index: int) -> GeoPoint:
+        landmark = self._landmark_at(index)
+        return GeoPoint(lat_deg=landmark.lat_deg, lon_deg=landmark.lon_deg, alt_m=landmark.alt_m)
 
     def _set_host_port(self, token: str) -> str:
         """Comando ``@(baud,0,F)``: configura a porta serial do host."""

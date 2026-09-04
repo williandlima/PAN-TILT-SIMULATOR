@@ -1,44 +1,44 @@
-"""Geo Pointing Module (GPM) e rastreamento de antena por telemetria GPS.
+"""Geo Pointing Module (GPM) — Capítulo 17 do manual real da FLIR.
 
-Este módulo tem duas partes distintas — não confunda uma com a outra:
+Todo o conteúdo deste módulo corresponde a comandos **confirmados byte a
+byte** contra fotos das páginas do "E Series Pan-Tilt Command Reference
+Manual, Version 6.00 (09/2014)" (páginas 99, 111 e 113):
 
 1. ``GpmPose`` — a pose própria da unidade (onde ela está instalada:
    latitude, longitude, altitude, roll, pitch, yaw, offset de pitch da
-   câmera). Isto é o recurso **real e confirmado** da FLIR, "Geo Pointing
-   Module", Capítulo 17 do "E Series Pan-Tilt Command Reference Manual,
-   Version 6.00 (09/2014)": os comandos ``GL``/``GO``/``GA``/``GLLA``
-   (posição) e ``GR``/``GP``/``GY``/``GRPY``/``GCP`` (orientação) foram
-   verificados **byte a byte** contra fotos das páginas 99 e 111 desse
-   manual, incluindo o formato exato de resposta. Ver
-   ``pantiltsim/protocol.py`` (comandos ``G...``) e ``docs/PROTOCOL.md``.
+   câmera). Comandos ``GL``/``GO``/``GA``/``GLLA`` (seção 17.3, posição) e
+   ``GR``/``GP``/``GY``/``GRPY``/``GCP`` (seção 17.4, orientação).
 
-   Repare que isto é a posição de **instalação** da própria unidade — o
-   mesmo que a FLIR documenta em suas páginas de suporte como exigindo
-   calibração prévia contra pontos de referência conhecidos, para uso em
-   **instalações fixas**. Não é um comando para informar a posição de um
-   alvo em movimento.
+2. ``Landmark`` — pontos de referência de posição conhecida, usados na
+   calibração da unidade. Comandos ``GM``/``GMA``/``GMN``/``GMD``/``GMC``
+   (seção 17.5).
 
-2. ``GeoTracker``/``LinearTrajectory``/``look_angles`` — o cálculo de
-   apontamento (azimute/elevação/distância) de um alvo a partir de duas
-   posições geodésicas, e uma ferramenta de demonstração deste simulador
-   que usa esse cálculo para apontar o pan-tilt continuamente para um
-   alvo em movimento (ex.: um veículo transmitindo sua própria posição
-   por telemetria GPS) — o mesmo princípio de uma estação terrena de
-   rastreamento de satélite. **Isto não é um comando do protocolo DPCL**:
-   nenhuma fonte confirmou um comando ASCII de "aqui está a posição atual
-   de um alvo em movimento, aponte para lá agora" na família de comandos
-   GPM da FLIR (que, pelo contrário, é documentada como não recomendada
-   para plataformas móveis). Por isso esta parte é exposta só pela
-   GUI/API Python do simulador — não inventa mais sintaxe de fio para não
-   repetir o erro das versões anteriores desta funcionalidade, que
-   propunham ``GO``/``GX``/``GE``/``GD``/``GA`` como comandos, colidindo
-   inclusive com os nomes reais confirmados depois (``GO`` é longitude,
-   ``GA`` é altitude).
+3. ``GeoTracker``/``look_angles`` — aponta o PTU para uma coordenada
+   geográfica **agora**, calculando azimute/elevação a partir da pose
+   própria (``GpmPose``) até o alvo. Corresponde ao comando real
+   ``GG<lat>,<lon>,<alt>`` (ou ``GG<índice>`` para apontar para um
+   landmark salvo) — seção 17.5. É uma ação imediata (como ``PP``/``TP``),
+   não um modo "ligar/desligar rastreamento": cada chamada aponta de
+   novo. Rastrear um alvo em movimento é, portanto, chamar isso
+   repetidamente com a posição mais recente — exatamente o que uma
+   estação de solo real faz ao receber atualizações de GPS por
+   telemetria (o mesmo princípio de uma estação terrena de satélite).
+   ``GGD`` consulta a distância (m) até o aim point atual ou até um
+   ponto informado.
 
-A matemática de apontamento (item 2) é geodésico -> ECEF -> ENU no
-elipsoide WGS84 — o método padrão de rastreamento de antena (o mesmo do
-Gpredict e de estações terrenas de satélite), não uma aproximação de
-Terra plana:
+Ver ``pantiltsim/protocol.py`` (comandos ``G...``) e ``docs/PROTOCOL.md``
+para o detalhamento completo, inclusive o que do capítulo 17 **ainda não**
+foi confirmado (``GC`` calibrar, ``GS`` status, ``GDR`` restaurar, ``GT``
+tipo de ponto).
+
+``LinearTrajectory`` é só uma ferramenta de demonstração deste simulador
+(não é comando do fabricante): gera uma "posição de GPS" simulada de um
+veículo com rumo/velocidade constantes, para exercitar ``GeoTracker`` sem
+hardware GPS real.
+
+A matemática de apontamento é geodésico -> ECEF -> ENU no elipsoide
+WGS84 — o método padrão de rastreamento de antena (o mesmo do Gpredict e
+de estações terrenas de satélite), não uma aproximação de Terra plana:
 
     1. Latitude/longitude/altitude (de cada ponto) viram coordenadas
        cartesianas ECEF (Earth-Centered, Earth-Fixed) usando o raio de
@@ -104,6 +104,27 @@ class GpmPose:
     pitch_deg: float = 0.0
     yaw_deg: float = 0.0
     camera_pitch_offset_deg: float = 0.0
+
+
+@dataclass
+class Landmark:
+    """Ponto de referência salvo para calibração do GPM (comandos GM...).
+
+    ``pan_position``/``tilt_position`` são as contagens de pan/tilt no
+    momento em que o landmark foi salvo (``GMA``) — a calibração real
+    consiste em apontar fisicamente o PTU para o ponto de referência
+    conhecido e então salvá-lo, então este simulador captura a posição
+    atual dos eixos nesse momento. O manual também lista um campo
+    ``<error>`` (erro de mira) na consulta ``GM``, mas não detalha como é
+    calculado — este simulador não o modela e sempre reporta 0.0.
+    """
+
+    name: str
+    lat_deg: float
+    lon_deg: float
+    alt_m: float
+    pan_position: int = 0
+    tilt_position: int = 0
 
 
 @dataclass(frozen=True)
@@ -213,27 +234,25 @@ class LinearTrajectory:
 
 @dataclass
 class GeoTrackerState:
-    enabled: bool = False
     target: GeoPoint | None = None
     last_look: LookAngles | None = None
 
 
 class GeoTracker:
-    """Ferramenta de demonstração da GUI: rastreamento contínuo de um alvo.
+    """Aponta o PTU para uma coordenada geográfica agora — comando real ``GG``.
 
     Usa a posição própria já calibrada em ``device.gpm_pose`` (comandos
-    reais ``GL``/``GO``/``GA``/``GLLA``) como estação de solo, e aponta o
-    pan-tilt para um alvo em movimento (``target``, tipicamente atualizado
-    por um feed de GPS externo a cada nova posição recebida). Quando
-    habilitado, cada atualização de alvo recalcula azimute/elevação e
-    comanda a posição alvo de pan/tilt. O movimento físico até lá usa o
-    mesmo motor de simulação (perfil de aceleração, limites de
+    reais ``GL``/``GO``/``GA``/``GLLA``) como estação de solo. Cada
+    chamada a ``set_target`` é uma **ação imediata** (como ``PP``/``TP``):
+    recalcula azimute/elevação e comanda a posição alvo de pan/tilt na
+    hora — não existe um "modo de rastreamento" para ligar/desligar,
+    igual ao comando real ``GG<lat>,<lon>,<alt>``. O movimento físico até
+    lá usa o mesmo motor de simulação (perfil de aceleração, limites de
     velocidade) de qualquer outro comando de posição.
 
-    **Isto não é um comando do protocolo DPCL** — é lógica de aplicação
-    exposta só pela GUI/API Python deste simulador (ver módulo docstring
-    para o porquê). Os comandos DPCL reais e confirmados ficam em
-    ``GpmPose``/``pantiltsim/protocol.py``.
+    Rastrear um veículo em movimento é, portanto, chamar ``set_target``
+    repetidamente com a posição mais recente recebida por telemetria —
+    exatamente o que uma estação de solo real faz.
 
     O alinhamento azimutal (o que "pan = 0°" significa fisicamente — via
     de regra, norte verdadeiro) é responsabilidade de quem instala a
@@ -245,34 +264,22 @@ class GeoTracker:
         self.device = device
         self.state = GeoTrackerState()
 
-    def _observer(self) -> GeoPoint:
+    def observer(self) -> GeoPoint:
         pose = self.device.gpm_pose
         return GeoPoint(
             lat_deg=pose.latitude_deg, lon_deg=pose.longitude_deg, alt_m=pose.altitude_m
         )
 
-    def set_target(self, point: GeoPoint) -> None:
+    def set_target(self, point: GeoPoint) -> LookAngles:
+        look = look_angles(self.observer(), point)
         self.state.target = point
-        if self.state.enabled:
-            self._point_at_target()
-
-    def enable(self) -> None:
-        self.state.enabled = True
-        if self.state.target is not None:
-            self._point_at_target()
-
-    def disable(self) -> None:
-        self.state.enabled = False
-
-    def current_look_angles(self) -> LookAngles:
-        if self.state.target is None:
-            raise ValueError("Defina o alvo primeiro (GeoTracker.set_target)")
-        return look_angles(self._observer(), self.state.target)
-
-    def _point_at_target(self) -> None:
-        look = self.current_look_angles()
         self.state.last_look = look
 
         pan_deg = _normalize_signed_degrees(look.azimuth_deg)
         self.device.pan.set_target_position(self.device.pan.deg_to_counts(pan_deg))
         self.device.tilt.set_target_position(self.device.tilt.deg_to_counts(look.elevation_deg))
+        return look
+
+    def reset(self) -> None:
+        self.state.target = None
+        self.state.last_look = None

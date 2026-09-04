@@ -362,9 +362,10 @@ class PanTiltDevice:
 
         # Import tardio para evitar dependência circular (tracking.py usa
         # apenas o dispositivo pelo lado de fora, não o contrário).
-        from .tracking import GeoTracker, GpmPose
+        from .tracking import GeoTracker, GpmPose, Landmark
 
         self.gpm_pose = GpmPose()
+        self.gpm_landmarks: list[Landmark] = []
         self.geo_tracker = GeoTracker(self)
 
     # ------------------------------------------------------------------
@@ -432,12 +433,11 @@ class PanTiltDevice:
                 self.slaved_execution = False
                 self.monitor = MonitorState()
                 self._pending_targets.clear()
-                self.geo_tracker.disable()
+                self.geo_tracker.reset()
 
     def halt_all(self) -> None:
         with self.lock:
             self.monitor.enabled = False
-            self.geo_tracker.disable()
             self._pending_targets.clear()
             for axis in self.axes:
                 axis.halt()
@@ -520,7 +520,8 @@ class PanTiltDevice:
                 "gpm_pitch_deg": self.gpm_pose.pitch_deg,
                 "gpm_yaw_deg": self.gpm_pose.yaw_deg,
                 "gpm_camera_pitch_offset_deg": self.gpm_pose.camera_pitch_offset_deg,
-                "geo_tracking": self.geo_tracker.state.enabled,
+                "gpm_landmark_count": len(self.gpm_landmarks),
+                "geo_tracking": self.geo_tracker.state.target is not None,
                 "geo_target": self.geo_tracker.state.target,
                 "geo_look": self.geo_tracker.state.last_look,
             }

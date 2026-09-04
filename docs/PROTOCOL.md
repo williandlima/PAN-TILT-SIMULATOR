@@ -151,10 +151,10 @@ Não são apenas respostas: o simulador tem física e estado.
 ## Geo Pointing Module (GPM) — Capítulo 17, confirmado byte a byte
 
 **Esta seção foi reescrita depois de acesso real ao manual**: o usuário
-fotografou as páginas 99 e 111 do "E Series Pan-Tilt Command Reference
-Manual, Version 6.00 (09/2014)" da FLIR (Capítulo 17: "Geo Pointing
-Module"), permitindo confirmar sintaxe e formato de resposta byte a
-byte — não mais por indício ou página de suporte indexada. O PDF
+fotografou as páginas 99, 111 e 113 do "E Series Pan-Tilt Command
+Reference Manual, Version 6.00 (09/2014)" da FLIR (Capítulo 17: "Geo
+Pointing Module"), permitindo confirmar sintaxe e formato de resposta
+byte a byte — não mais por indício ou página de suporte indexada. O PDF
 completo continua inacessível por este ambiente (ver "Fontes"), mas o
 essencial do capítulo foi verificado desta forma.
 
@@ -162,13 +162,17 @@ essencial do capítulo foi verificado desta forma.
 
 O GPM guarda a **pose própria da unidade** — onde ela está instalada no
 mundo (latitude, longitude, altitude) e como está orientada (roll, pitch,
-yaw) — para poder, em conjunto com uma calibração contra pontos de
-referência conhecidos, converter coordenadas geográficas em ângulos de
-pan/tilt. **Não é** um comando para informar a posição de um alvo em
-movimento: os comandos abaixo sempre leem/escrevem a pose da própria
-unidade.
+yaw) — e, com isso calibrado, aceita um comando (`GG`, seção 17.5) que
+manda o PTU **apontar para qualquer coordenada geográfica agora**,
+convertendo internamente para ângulos de pan/tilt. Ou seja: os comandos
+de posição/orientação (`GL`/`GO`/`GA`/`GLLA`/`GR`/`GP`/`GY`/`GRPY`) são a
+pose da **própria unidade** (onde ela está, não o alvo) — mas o alvo em
+si é informado por um comando real, `GG`, que aponta para lá na hora.
+Isso corrige uma leitura anterior desta seção, que (antes de ver a
+página 113) concluía que não havia comando real para apontar para um
+alvo — havia, só estava numa página ainda não fotografada.
 
-### Comandos confirmados (seção 17.3, página 99, e 17.4, página 111)
+### Posição e orientação próprias (seção 17.3, página 99, e 17.4, página 111)
 
 | Comando | | Descrição | Campo em `GpmPose` |
 |---------|--|-----------|---------------------|
@@ -221,60 +225,93 @@ GCP * 10.300000
 o dispositivo devolve de fato é `* <valor>\r\n`, igual ao resto do DPCL;
 com eco ligado, o comando enviado aparece ecoado antes disso.)
 
+### Aim point e landmarks (seção 17.5, página 113)
+
+| Comando | | Descrição |
+|---------|--|-----------|
+| `GG` | ✅ | Consulta a última posição apontada (`* <lat>,<lon>,<alt>`, 5 casas decimais). |
+| `GG<lat>,<lon>,<alt>` | ✅ | Aponta o PTU para a coordenada informada **agora**. Resposta seca `*\r\n` (ação, não define um "valor" como GLLA/GRPY). |
+| `GG<índice>` | ✅ | Aponta o PTU para o landmark salvo naquele índice (a partir de 0). |
+| `GGD` | ✅ | Consulta a distância (m) até o aim point atual. |
+| `GGD<lat>,<lon>,<alt>` | ✅ | Consulta a distância (m) até um ponto informado, sem mover nada. |
+| `GM` | ✅ | Lista todos os landmarks salvos, formato `<índice>,<nome>,<lat>,<lon>,<alt>,<pan>,<tilt>,<erro>` por landmark, separados por `;`. |
+| `GM<índice>` | ✅ | Consulta um landmark específico. |
+| `GMA<nome>,<lat>,<lon>,<alt>` | ✅ | Salva um novo landmark. |
+| `GMN` | ✅ | Consulta o número de landmarks salvos. |
+| `GMD` | ✅ | Apaga o landmark salvo mais recentemente. |
+| `GMD<índice>` | ✅ | Apaga o landmark de um índice específico. |
+| `GMC` | ✅ | Apaga todos os landmarks. |
+
+**`GG<lat>,<lon>,<alt>` é o comando real de "aponte para esta coordenada
+agora"** — a peça central para rastreamento de antena por telemetria.
+Rastrear um veículo em movimento é chamar `GG` de novo a cada posição
+de GPS recebida — exatamente o mesmo princípio de uma estação terrena de
+satélite. É uma **ação imediata** (como `PP`/`TP`), não um modo
+liga/desliga: não existe estado de "rastreamento habilitado" no
+protocolo real, e por isso este simulador removeu essa ideia de uma
+versão anterior desta funcionalidade (que tinha comandos inventados
+`GO`/`GX`/`GE`/`GD`/`GA` para isso — e que, aliás, colidiam com os nomes
+reais confirmados depois: `GO` é longitude, `GA` é altitude).
+
+Exemplo literal do manual (página 113, seção 17.5.3):
+
+```
+GM * 0,HOTEL,37.5918,-122.3475,40.0000,0.0000;OFFICE,37.5941,-122.3656,42.0000,0.0000;STATION,37.6010,-122.3858,18.0000,0.0000
+
+GG  * 38.60138,-122.37686,6.00000
+GG38.60138,-122.37686,6.0000  *
+GG1
+```
+
+(a foto do exemplo de `GM` está com resolução baixa; o número de campos
+por landmark que aparece legível é menor do que os 8 campos que a
+própria seção "where" documenta — `<index>,<name>,<lat>,<lon>,<alt>,<span
+pos>,<tilt pos>,<error>`. Este simulador implementa o formato
+**documentado** (8 campos), não a leitura do exemplo, que pode estar
+incompleta pela qualidade da foto.)
+
+O `GG` como consulta usa **5 casas decimais** (diferente das 6 dos
+comandos de posição/orientação própria da seção 17.4) — confirmado por
+`38.60138`/`-122.37686`/`6.00000` no exemplo acima. `GGD` não aparece
+com um exemplo numérico fotografado; este simulador usa 4 casas
+decimais por consistência com o resto do capítulo, mas isso é uma
+suposição, não uma confirmação. Os campos `<span pos>`/`<tilt pos>` de
+um landmark (prováveis "pan pos"/"tilt pos": as contagens de pan/tilt no
+momento em que o landmark foi salvo) e o campo `<error>` (erro de mira,
+sem detalhamento no manual de como é calculado) seguem as mesmas
+ressalvas — ver `pantiltsim/tracking.py` (`Landmark`) para os detalhes.
+
+`GeoTracker.set_target()` (`pantiltsim/tracking.py`) implementa `GG`:
+calcula azimute/elevação de `device.gpm_pose` (a posição própria,
+definida por `GLLA`) até o alvo, e comanda `PP`/`TP` internamente. O
+cálculo é geodésico → ECEF (Earth-Centered, Earth-Fixed) → ENU
+(East-North-Up, plano tangente local da estação) no elipsoide WGS84 — o
+método padrão de rastreamento de antena, não uma aproximação de Terra
+plana; ver `look_angles()` e `tests/test_tracking.py` para os casos de
+referência conferidos à mão. A GUI (aba "Rastreamento GPS") e uma
+trajetória de demonstração (`LinearTrajectory`, não é comando do
+fabricante — só um gerador de posições de GPS simuladas) usam o mesmo
+`GG` real por baixo dos panos.
+
 ### O que ainda não foi confirmado
 
-O capítulo 17 continua além do que foi fotografado até agora — outras
-seções cobrem calibração contra pontos de referência (`GC` calibrar,
-`GG` apontar/consultar landmark, `GMN` número de landmarks, `GS` status,
-`GDR` restaurar última configuração salva) e o que parece ser um modo de
-apontamento operacional (`GT` tipo de ponto, `GGD` distância até o
-"aim point"). A **função** de cada um foi indicada pelo usuário a partir
-do índice/descrição do manual, mas a **sintaxe exata** (formato de
-argumento, valores aceitos por `GT`) não foi fotografada ainda — por
-isso esses comandos não estão implementados neste simulador. Se você
-tiver acesso a essas páginas, é só completar a tabela acima.
+`GC` (calibrar a partir dos landmarks apontados), `GS` (status do GPM),
+`GDR` (restaurar última configuração salva) e `GT` (consulta/define o
+"tipo de ponto") foram citados pelo usuário a partir do índice do
+manual, mas a **sintaxe exata** (formato de argumento, valores aceitos
+por `GT`) ainda não foi fotografada — por isso não estão implementados
+neste simulador. Se você tiver acesso a essas páginas, é só completar a
+tabela acima.
 
-### Rastreamento contínuo de um alvo em movimento — recurso da GUI/API, não um comando DPCL
-
-Nenhuma fonte confirmou um comando ASCII do GPM para "aqui está a
-posição atual de um alvo em movimento, aponte para lá agora" — pelo
-contrário: a FLIR documenta o GPM como calibração de uma **instalação
-fixa** contra pontos de referência conhecidos, e páginas de suporte
-oficiais (`flir.custhelp.com`) afirmam que o recurso é **"não
-recomendado para aplicações aerotransportadas, montadas em veículo, ou
-outras plataformas móveis"** — o oposto do cenário de seguir um veículo
-em voo.
-
-Por isso, o rastreamento contínuo de um alvo por GPS/telemetria — o
-mesmo princípio de uma estação terrena de satélite, aplicado a um
-veículo (avião, drone, balão de sondagem, foguete de sondagem) que
-transmite sua própria posição — é implementado neste simulador **só
-como lógica de aplicação** (`pantiltsim.tracking.GeoTracker`), exposta
-pela GUI (aba "Rastreamento GPS") e pela API Python do dispositivo
-(`device.geo_tracker`), e **não como comando de fio**. Isso evita
-repetir o erro de uma versão anterior desta funcionalidade, que
-inventava comandos `GO`/`GX`/`GE`/`GD`/`GA` — os quais colidiam,
-inclusive, com os nomes reais confirmados depois (`GO` é longitude,
-`GA` é altitude).
-
-O `GeoTracker` usa `device.gpm_pose` (definida pelos comandos reais
-acima) como a posição da estação de solo, e um `GeoPoint` de alvo
-definido pela GUI ou por código — e recalcula azimute/elevação a cada
-atualização do alvo, comandando `PP`/`TP` internamente. O cálculo é
-geodésico → ECEF (Earth-Centered, Earth-Fixed) → ENU (East-North-Up,
-plano tangente local da estação) no elipsoide WGS84 — o método padrão
-de rastreamento de antena, não uma aproximação de Terra plana; ver
-`pantiltsim/tracking.py` (`look_angles`) e `tests/test_tracking.py`
-para os casos de referência conferidos à mão.
-
-**Isto não é orientação de armas.** O cálculo só resolve "para onde
-apontar" a partir de duas posições geográficas — a mesma matemática vale
-para qualquer veículo com GPS. Não rastreia, identifica nem interage com
-o veículo: apenas converte coordenadas recebidas de uma fonte externa
-(um receptor GPS real, ou aqui, para demonstração, o gerador de
-trajetória `LinearTrajectory`) num ângulo de apontamento de antena — a
-mesma função que uma antena parabólica de estação terrena exerce ao
-seguir um satélite.
+**Isto não é orientação de armas.** `GG`/`GGD` só resolvem "para onde
+apontar" e "a que distância" a partir de duas posições geográficas — a
+mesma matemática vale para qualquer veículo com GPS (avião, drone, balão
+de sondagem, foguete de sondagem). Não rastreiam, identificam nem
+interagem com o veículo: apenas convertem coordenadas recebidas de uma
+fonte externa (um receptor GPS real, ou aqui, para demonstração, o
+gerador de trajetória `LinearTrajectory`) num ângulo de apontamento de
+antena — a mesma função que uma antena parabólica de estação terrena
+exerce ao seguir um satélite.
 
 ## Erros
 
@@ -335,15 +372,20 @@ manual, fornecidas pelo usuário nesta sessão:**
 - "E Series Pan-Tilt Command Reference Manual, Version 6.00 (09/2014)",
   Teledyne FLIR Commercial Systems, Inc. — Capítulo 17 "Geo Pointing
   Module", páginas 99 (seção 17.3 "Position and Altitude": comandos
-  `GL`/`GO`/`GA`/`GLLA`) e 111 (seção 17.4 "PTU/Camera Orientation":
+  `GL`/`GO`/`GA`/`GLLA`), 111 (seção 17.4 "PTU/Camera Orientation":
   comandos `GR`/`GP`/`GY`/`GRPY`/`GCP`, com exemplo de sintaxe completo
-  na seção 17.4.3). Este é o mesmo arquivo indexado publicamente como
-  `CMD_REF_E_Manual_6.00_PRINT.PDF` — **isto corrige uma conclusão
-  anterior desta seção**, que (por falta de acesso ao PDF em si)
-  afirmava que o GPM roda só pela interface Ethernet/IP da unidade; na
-  verdade os comandos de posição/orientação própria fazem parte do
-  mesmo protocolo serial ASCII (DPCL) documentado no resto deste
-  arquivo — a interface Ethernet/web citada pelas páginas de suporte
+  na seção 17.4.3) e 113 (seção 17.5 "Landmarks": comandos
+  `GM`/`GMA`/`GMN`/`GMD`/`GMC`/`GG`/`GGD`, com exemplo de sintaxe na
+  seção 17.5.3 — inclusive `GG<lat>,<lon>,<alt>`, o comando real de
+  "aponte para esta coordenada agora"). Este é o mesmo arquivo indexado
+  publicamente como `CMD_REF_E_Manual_6.00_PRINT.PDF` — **isto corrige
+  uma conclusão anterior desta seção**, que (por falta de acesso ao PDF
+  em si) afirmava que o GPM roda só pela interface Ethernet/IP da
+  unidade e que não existiria comando real para apontar a um alvo; na
+  verdade os comandos de posição/orientação própria e o de aim point
+  fazem parte do mesmo protocolo serial ASCII (DPCL) documentado no
+  resto deste arquivo — a interface Ethernet/web citada pelas páginas de
+  suporte
   abaixo é, aparentemente, uma via alternativa/de configuração para o
   mesmo recurso, não a única.
 

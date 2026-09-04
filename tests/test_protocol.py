@@ -322,50 +322,115 @@ def test_gpm_unknown_command_is_an_error(ptu):
     assert protocol.execute_line("GZ").startswith("!")
 
 
-# -- rastreamento de antena por GPS: recurso de GUI/API deste simulador,
-# não um comando DPCL (ver pantiltsim/tracking.py). Usa device.gpm_pose
-# (definida pelos comandos GPM reais acima) como estação de solo.
-def test_geo_tracker_uses_gpm_pose_as_observer(ptu):
-    from pantiltsim.tracking import GeoPoint
-
+# -- aim point (GG/GGD) e landmarks (GM/GMA/GMN/GMD/GMC) — seção 17.5,
+# confirmados byte a byte contra foto da página 113 do manual real.
+# GG<lat,lon,alt> É o comando real de "aponte para esta coordenada agora"
+# — uma ação (responde "*\r\n" seco), não um modo liga/desliga.
+def test_gpm_aim_point_matches_manual_example(ptu):
+    """Reproduz o exemplo da seção 17.5.3 (página 113, foto real)."""
     device, protocol = ptu
-    protocol.execute_line("GLLA0,0,0")  # posição própria via comando real
-    device.geo_tracker.enable()
-    device.geo_tracker.set_target(GeoPoint(lat_deg=0.0, lon_deg=1.0, alt_m=0.0))
+    protocol.execute_line("GLLA0,0,0")  # estação em (0,0,0)
+
+    assert protocol.execute_line("GG-22.9,-43.2,0") == "*\r\n"
+    assert protocol.execute_line("GG") == "* -22.90000,-43.20000,0.00000\r\n"
+
+
+def test_gpm_aim_point_moves_pan_tilt(ptu):
+    device, protocol = ptu
+    protocol.execute_line("GLLA0,0,0")
+    protocol.execute_line("GG0,1,0")  # alvo a leste
 
     pan_deg = device.pan.counts_to_deg(device.pan.target_position)
     assert pan_deg == pytest.approx(90.0, abs=0.5)
 
 
-def test_geo_tracker_disabled_by_default_does_not_move(ptu):
-    from pantiltsim.tracking import GeoPoint
+def test_gpm_aim_query_before_set_is_an_error(ptu):
+    _, protocol = ptu
+    assert protocol.execute_line("GG").startswith("!")
+    assert protocol.execute_line("GGD").startswith("!")
 
-    device, _ = ptu
-    device.geo_tracker.set_target(GeoPoint(lat_deg=0.0, lon_deg=1.0, alt_m=0.0))
-    assert device.pan.target_position == 0  # tracking nunca foi habilitado
+
+def test_gpm_aim_distance_matches_look_angles(ptu):
+    from pantiltsim.tracking import GeoPoint, look_angles
+
+    device, protocol = ptu
+    protocol.execute_line("GLLA0,0,0")
+    protocol.execute_line("GG0,1,0")
+
+    response = protocol.execute_line("GGD")
+    expected = look_angles(GeoPoint(0, 0, 0), GeoPoint(0, 1, 0)).range_m
+    assert float(response.strip().lstrip("* ")) == pytest.approx(expected, abs=0.5)
+
+
+def test_gpm_aim_distance_to_arbitrary_point_does_not_move(ptu):
+    """GGD<lat,lon,alt> só consulta — não altera o apontamento atual."""
+    device, protocol = ptu
+    protocol.execute_line("GLLA0,0,0")
+    protocol.execute_line("GG0,1,0")
+    pan_before = device.pan.target_position
+
+    protocol.execute_line("GGD1,0,0")
+
+    assert device.pan.target_position == pan_before
+
+
+def test_gpm_landmark_lifecycle(ptu):
+    _, protocol = ptu
+    assert protocol.execute_line("GMN") == "* 0\r\n"
+
+    assert protocol.execute_line("GMAHOTEL,37.5918,-122.3475,40") == "*\r\n"
+    assert protocol.execute_line("GMAOFFICE,37.5941,-122.3656,42") == "*\r\n"
+    assert protocol.execute_line("GMN") == "* 2\r\n"
+
+    response = protocol.execute_line("GM0")
+    assert response.startswith("* 0,HOTEL,37.5918,-122.3475,40.0000,")
+
+    listing = protocol.execute_line("GM")
+    assert "HOTEL" in listing and "OFFICE" in listing and ";" in listing
+
+    assert protocol.execute_line("GMD0") == "*\r\n"
+    assert protocol.execute_line("GMN") == "* 1\r\n"
+
+    assert protocol.execute_line("GMC") == "*\r\n"
+    assert protocol.execute_line("GMN") == "* 0\r\n"
+
+
+def test_gpm_aim_at_landmark_by_index(ptu):
+    """"GG<índice>" aponta para um landmark salvo (exemplo "GG1" do manual)."""
+    device, protocol = ptu
+    protocol.execute_line("GLLA0,0,0")
+    protocol.execute_line("GMALANDMARK,0,1,0")  # landmark a leste
+
+    assert protocol.execute_line("GG0") == "*\r\n"
+    pan_deg = device.pan.counts_to_deg(device.pan.target_position)
+    assert pan_deg == pytest.approx(90.0, abs=0.5)
+
+
+def test_gpm_landmark_unknown_index_is_an_error(ptu):
+    _, protocol = ptu
+    assert protocol.execute_line("GM0").startswith("!")
+    assert protocol.execute_line("GMD0").startswith("!")
+    assert protocol.execute_line("GG0").startswith("!")
 
 
 def test_geo_tracking_state_reported_in_snapshot(ptu):
-    from pantiltsim.tracking import GeoPoint
-
-    device, _ = ptu
-    device.geo_tracker.enable()
-    device.geo_tracker.set_target(GeoPoint(lat_deg=0.0, lon_deg=1.0, alt_m=0.0))
+    device, protocol = ptu
+    protocol.execute_line("GLLA0,0,0")
+    protocol.execute_line("GG0,1,0")
 
     snap = device.snapshot()
     assert snap["geo_tracking"] is True
     assert snap["geo_target"] is not None
     assert snap["geo_look"] is not None
     assert snap["gpm_latitude_deg"] == 0.0
+    assert snap["gpm_landmark_count"] == 0
 
 
-def test_reset_disables_geo_tracking(ptu):
-    from pantiltsim.tracking import GeoPoint
-
+def test_reset_clears_geo_tracker_target(ptu):
     device, protocol = ptu
-    device.geo_tracker.enable()
-    device.geo_tracker.set_target(GeoPoint(lat_deg=0.0, lon_deg=1.0, alt_m=0.0))
-    assert device.geo_tracker.state.enabled is True
+    protocol.execute_line("GLLA0,0,0")
+    protocol.execute_line("GG0,1,0")
+    assert device.geo_tracker.state.target is not None
 
     protocol.execute_line("RE")
-    assert device.geo_tracker.state.enabled is False
+    assert device.geo_tracker.state.target is None

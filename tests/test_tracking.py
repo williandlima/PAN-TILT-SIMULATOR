@@ -102,10 +102,12 @@ def test_linear_trajectory_heading_north():
 
 
 # ---------------------------------------------------------------------------
-# GeoTracker é um recurso de GUI/API deste simulador (não um comando DPCL):
-# a estação de solo vem de device.gpm_pose, que os comandos reais e
-# confirmados GL/GO/GA/GLLA (Geo Pointing Module) definem via protocolo.
-def test_geo_tracker_points_device_when_enabled():
+# GeoTracker.set_target() é uma AÇÃO IMEDIATA — corresponde ao comando real
+# GG<lat>,<lon>,<alt> (confirmado byte a byte, Capítulo 17 seção 17.5): cada
+# chamada aponta na hora, não existe "habilitar/desabilitar rastreamento".
+# A estação de solo vem de device.gpm_pose, definida pelos comandos reais
+# GL/GO/GA/GLLA.
+def test_geo_tracker_points_device_on_set_target():
     device = build_device()
     tracker = GeoTracker(device)
 
@@ -113,7 +115,6 @@ def test_geo_tracker_points_device_when_enabled():
     device.gpm_pose.latitude_deg = 0.0
     device.gpm_pose.longitude_deg = 0.0
     device.gpm_pose.altitude_m = 0.0
-    tracker.enable()
     tracker.set_target(GeoPoint(lat_deg=0.0, lon_deg=1.0, alt_m=0.0))
 
     # Alvo a leste -> pan positivo (~90°), dentro da faixa de fábrica.
@@ -121,19 +122,9 @@ def test_geo_tracker_points_device_when_enabled():
     assert pan_deg == pytest.approx(90.0, abs=0.5)
 
 
-def test_geo_tracker_does_not_move_device_when_disabled():
-    device = build_device()
-    tracker = GeoTracker(device)
-
-    tracker.set_target(GeoPoint(lat_deg=0.0, lon_deg=1.0, alt_m=0.0))
-
-    assert device.pan.target_position == 0  # tracking nunca foi habilitado
-
-
 def test_geo_tracker_updates_continuously_as_target_moves():
     device = build_device()
     tracker = GeoTracker(device)
-    tracker.enable()
 
     tracker.set_target(GeoPoint(lat_deg=0.0, lon_deg=1.0, alt_m=0.0))
     first_pan = device.pan.target_position
@@ -149,7 +140,6 @@ def test_geo_tracker_azimuth_wraps_to_shortest_path():
     """Alvo a oeste (azimute ~270°) deve virar pan ~ -90°, não 270°."""
     device = build_device()
     tracker = GeoTracker(device)
-    tracker.enable()
     tracker.set_target(GeoPoint(lat_deg=0.0, lon_deg=-1.0, alt_m=0.0))
 
     pan_deg = device.pan.counts_to_deg(device.pan.target_position)
@@ -160,10 +150,20 @@ def test_geo_tracker_uses_gpm_pose_as_moving_observer():
     """Se a posição própria (gpm_pose) mudar, o próximo apontamento reflete isso."""
     device = build_device()
     tracker = GeoTracker(device)
-    tracker.enable()
 
     device.gpm_pose.longitude_deg = 1.0  # estação "se move" para leste do alvo
     tracker.set_target(GeoPoint(lat_deg=0.0, lon_deg=0.0, alt_m=0.0))
 
     pan_deg = device.pan.counts_to_deg(device.pan.target_position)
     assert pan_deg == pytest.approx(-90.0, abs=0.5)  # alvo agora a oeste
+
+
+def test_geo_tracker_reset_clears_target_and_last_look():
+    device = build_device()
+    tracker = GeoTracker(device)
+    tracker.set_target(GeoPoint(lat_deg=0.0, lon_deg=1.0, alt_m=0.0))
+    assert tracker.state.target is not None
+
+    tracker.reset()
+    assert tracker.state.target is None
+    assert tracker.state.last_look is None

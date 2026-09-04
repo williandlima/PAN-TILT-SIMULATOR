@@ -41,18 +41,16 @@ demonstração visual do comportamento do equipamento.
    micropasso alterando a resolução, `A` (await) segurando o enlace até o
    movimento terminar.
 7. **Geo Pointing Module (GPM)** — comandos reais `GL`/`GO`/`GA`/`GLLA`
-   (posição própria da unidade) e `GR`/`GP`/`GY`/`GRPY`/`GCP`
-   (orientação própria), **confirmados byte a byte** contra fotos do
-   Capítulo 17 do manual oficial da FLIR. Por cima disso, uma
-   **demonstração de rastreamento contínuo de antena por GPS/telemetria**
-   (`pantiltsim/tracking.py`, `device.geo_tracker`) — aponta o pan-tilt
-   automaticamente para um alvo em movimento (aeronave, drone, foguete de
-   sondagem) a partir da posição GPS da estação de solo e do veículo, com
-   geodesia WGS84 completa (geodésico → ECEF → ENU); **não é** um comando
-   DPCL, é um recurso de GUI/API deste simulador, já que o GPM real não
-   documenta um comando para rastrear alvos móveis. Aba dedicada na GUI,
-   com trajetória de demonstração para ver o rastreamento em ação sem
-   hardware GPS real — ver [`docs/PROTOCOL.md`](docs/PROTOCOL.md).
+   (posição própria da unidade), `GR`/`GP`/`GY`/`GRPY`/`GCP` (orientação
+   própria) e `GG`/`GGD`/`GM`/`GMA`/`GMN`/`GMD`/`GMC` (aim point e
+   landmarks), **confirmados byte a byte** contra fotos do Capítulo 17
+   do manual oficial da FLIR. `GG<lat>,<lon>,<alt>` é o comando real que
+   aponta o pan-tilt para uma coordenada geográfica agora — rastrear um
+   veículo em movimento (aeronave, drone, foguete de sondagem) é chamá-lo
+   de novo a cada posição de GPS recebida, com geodesia WGS84 completa
+   (geodésico → ECEF → ENU). Aba dedicada na GUI, com trajetória de
+   demonstração para ver o rastreamento em ação sem hardware GPS real —
+   ver [`docs/PROTOCOL.md`](docs/PROTOCOL.md).
 
 ## Instalação
 
@@ -100,10 +98,10 @@ Na GUI:
   monitor/auto-scan. Cada botão envia comandos DPCL de verdade.
 - **Configuração** — micropasso, limites, modos de controle, potência,
   eco, feedback, execução slaved, salvar/restaurar.
-- **Rastreamento GPS** — define a posição da estação de solo e do alvo
-  (ou gera uma trajetória de demonstração), habilita o apontamento
-  automático e mostra azimute/elevação/distância calculados em tempo
-  real.
+- **Rastreamento GPS** — define a posição própria da unidade (`GLLA`) e
+  aponta para um alvo agora (`GG`, comando DPCL real) ou usa a
+  trajetória de demonstração para simular um veículo em movimento;
+  mostra azimute/elevação/distância calculados em tempo real.
 - **Terminal DPCL** — digite comandos crus (`PP1000`, `PR`, `PS`…) e veja
   a resposta, junto com todo o tráfego da porta serial.
 
@@ -178,15 +176,15 @@ pip install -e ".[dev]"
 pytest
 ```
 
-71 testes, em quatro níveis:
+77 testes, em quatro níveis:
 
 - `tests/test_device.py` — física do movimento, limites, micropasso,
   modos.
 - `tests/test_protocol.py` — cada comando e os formatos de resposta,
   incluindo os offsets exatos que os drivers reais usam para fatiar as
   respostas verbosas, e os comandos reais do Geo Pointing Module
-  (`GL`/`GO`/`GA`/`GLLA`/`GR`/`GP`/`GY`/`GRPY`/`GCP`), com um teste que
-  reproduz literalmente o exemplo do manual oficial.
+  (`GL`/`GO`/`GA`/`GLLA`/`GR`/`GP`/`GY`/`GRPY`/`GCP`/`GG`/`GGD`/`GM`/`GMA`/`GMN`/`GMD`/`GMC`),
+  com testes que reproduzem literalmente os exemplos do manual oficial.
 - `tests/test_tracking.py` — a geodesia WGS84 do rastreamento de antena
   (conversão geodésico → ECEF → ENU, azimute/elevação/distância) contra
   casos de referência conferidos à mão.
