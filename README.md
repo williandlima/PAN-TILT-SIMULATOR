@@ -76,6 +76,10 @@ script na placa — nenhum acesso à rede necessário na hora.
 > Windows, BeagleBone, instalação offline, teste sem hardware e
 > resolução de problemas): [`docs/PROCEDIMENTO.md`](docs/PROCEDIMENTO.md).
 
+> **Guia para quem só vai operar a interface**, sem precisar entender o
+> código — todo termo técnico traduzido e explicado, e os modos de teste
+> em linguagem simples: [`docs/GUIA_DO_OPERADOR.md`](docs/GUIA_DO_OPERADOR.md).
+
 Verificação rápida de que está tudo funcionando, sem precisar de hardware:
 
 ```bash
@@ -217,6 +221,8 @@ pantiltsim/
     ptu_render.py      # renderizador 3D do PTU com antena helicoidal
 tools/ptu_client.py    # controlador de exemplo / referência
 docs/PROTOCOL.md       # protocolo, verificação, limitações
+docs/PROCEDIMENTO.md   # instalação, teste e uso passo a passo
+docs/GUIA_DO_OPERADOR.md  # guia para quem só opera a interface
 ```
 
 ## Fidelidade ao equipamento real
