@@ -212,7 +212,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.device = device or PanTiltDevice()
         self.setWindowTitle(f"Simulador {self.device.model_name} — Pan-Tilt via RS-485/USB")
-        self.resize(1180, 720)
+        self.resize(1420, 720)
         self.setStyleSheet(_STYLESHEET)
         if _LOGO_PATH.exists():
             self.setWindowIcon(QIcon(str(_LOGO_PATH)))
@@ -268,7 +268,7 @@ class MainWindow(QMainWindow):
 
         container = QWidget()
         container.setLayout(side)
-        container.setMinimumWidth(430)
+        container.setMinimumWidth(660)
         root.addWidget(container, stretch=2)
 
     def _build_brand_header(self) -> QWidget:
