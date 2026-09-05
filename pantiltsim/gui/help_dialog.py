@@ -285,8 +285,8 @@ def _test_modes() -> str:
     <pre>pip install -e ".[dev]"
 pytest</pre>
     <p>
-      No Linux, 77 testes passam. No Windows o resultado correto é
-      <b>70 passed, 7 skipped</b>: os 7 testes ponta a ponta usam PTYs, que só
+      No Linux, 82 testes passam. No Windows o resultado correto é
+      <b>75 passed, 7 skipped</b>: os 7 testes ponta a ponta usam PTYs, que só
       existem em sistemas POSIX.
     </p>
 
@@ -419,12 +419,34 @@ GMC                         apaga todos</pre>
       (<code>look_angles</code>, usado por <code>GG</code>/<code>GGD</code>).
     </p>
 
+    <h3>4. Predição por velocidade (rate-aided tracking) — extensão do simulador</h3>
+    <p>
+      Numa estação de rastreamento de telemetria real, decodificar o
+      GPS recebido, calcular o apontamento e mover o pedestal levam
+      tempo — a antena está sempre correndo atrás da posição real do
+      alvo. A técnica padrão (usada por qualquer Antenna Control Unit de
+      campo de provas) é estimar a velocidade do alvo entre duas
+      posições consecutivas e apontar um pouco <b>à frente</b> de onde
+      ele estava por último — o mesmo princípio de um preditor α-β.
+    </p>
+    <p>
+      Com <b>Antecipação</b> (aba "Rastreamento GPS") maior que zero,
+      cada <code>GG</code> estima essa velocidade (por diferença finita
+      entre a chamada atual e a anterior) e aponta essa quantidade de
+      segundos à frente. Com 0 (padrão), o comportamento é idêntico ao
+      <code>GG</code> puro. <b>Isto não é um parâmetro do comando real</b>
+      — é exposto só pela GUI/API Python
+      (<code>device.geo_tracker.lead_seconds</code>), nunca como sintaxe
+      DPCL inventada.
+    </p>
+
     <h3>Usando pela aba "Rastreamento GPS"</h3>
     <table>
       <tr><th>Passo</th><th>O que fazer</th></tr>
       <tr><td>1</td><td>Preencha latitude/longitude/altitude em <b>"Posição própria da unidade"</b> e clique em <b>Definir posição (GLLA)</b>.</td></tr>
       <tr><td>2</td><td>Preencha a posição do <b>alvo</b> e clique em <b>Apontar (GG)</b> — ou use a trajetória de demonstração abaixo, que envia <code>GG</code> repetidamente.</td></tr>
-      <tr><td>3</td><td>Acompanhe azimute, elevação e distância calculados no painel "Apontamento atual".</td></tr>
+      <tr><td>3</td><td>(Opcional) ajuste a <b>Antecipação</b> para ver a predição por velocidade em ação — precisa de pelo menos 2 chamadas de <code>GG</code> para ter velocidade estimada.</td></tr>
+      <tr><td>4</td><td>Acompanhe azimute, elevação, distância, velocidade estimada e alvo previsto no painel "Apontamento atual".</td></tr>
     </table>
     <p>
       A <b>trajetória de demonstração</b> simula o feed de GPS de um

@@ -26,6 +26,23 @@ Manual, Version 6.00 (09/2014)" (páginas 99, 111 e 113):
    ``GGD`` consulta a distância (m) até o aim point atual ou até um
    ponto informado.
 
+4. **Predição por velocidade (rate-aided tracking)** — extensão própria
+   deste simulador, **não é um comando DPCL** (o comando real ``GG`` não
+   tem parâmetro de antecipação). Em sistemas reais de rastreamento de
+   telemetria, decodificar o quadro de GPS recebido, calcular
+   azimute/elevação e mover o pedestal levam tempo, então a antena
+   sempre corre atrás da posição real do veículo. A técnica padrão
+   (usada por qualquer Antenna Control Unit — ACU — de campo de provas)
+   é estimar a velocidade do alvo a partir de duas posições consecutivas
+   e apontar um pouco **à frente** de onde ele estava por último, não
+   exatamente onde ele estava. É o mesmo princípio de um preditor α-β.
+   ``GeoTracker`` faz isso quando ``lead_seconds > 0``: cada
+   ``set_target`` estima a velocidade (lat/lon/alt por segundo, por
+   diferença finita entre a chamada atual e a anterior) e aponta para a
+   posição extrapolada ``lead_seconds`` à frente — sem nunca perder a
+   posição realmente recebida, que continua disponível em
+   ``state.target``. Ver ``GeoTracker.lead_seconds``.
+
 Ver ``pantiltsim/protocol.py`` (comandos ``G...``) e ``docs/PROTOCOL.md``
 para o detalhamento completo, inclusive o que do capítulo 17 **ainda não**
 foi confirmado (``GC`` calibrar, ``GS`` status, ``GDR`` restaurar, ``GT``
@@ -69,6 +86,7 @@ seguir um satélite.
 from __future__ import annotations
 
 import math
+import time
 from dataclasses import dataclass
 
 # WGS84 — o mesmo datum que o GPS usa nativamente.
@@ -143,6 +161,43 @@ class LookAngles:
     azimuth_deg: float    # 0-360°, 0 = norte, sentido horário
     elevation_deg: float  # -90° a +90°, 0 = horizonte, + = acima
     range_m: float         # distância em linha reta até o alvo
+
+
+@dataclass(frozen=True)
+class GeoVelocity:
+    """Velocidade estimada do alvo, por diferença finita entre duas posições.
+
+    Linear em graus/segundo (lat/lon) e metros/segundo (altitude) — uma
+    simplificação de curto prazo (mesmo espírito de ``LinearTrajectory``),
+    válida para o intervalo de poucos segundos típico entre atualizações
+    de telemetria, não para extrapolações longas.
+    """
+
+    lat_deg_per_s: float
+    lon_deg_per_s: float
+    alt_m_per_s: float
+
+
+def _estimate_velocity(
+    previous: GeoPoint, previous_t: float, current: GeoPoint, current_t: float
+) -> GeoVelocity | None:
+    dt = current_t - previous_t
+    if dt <= 0:
+        return None
+    return GeoVelocity(
+        lat_deg_per_s=(current.lat_deg - previous.lat_deg) / dt,
+        lon_deg_per_s=(current.lon_deg - previous.lon_deg) / dt,
+        alt_m_per_s=(current.alt_m - previous.alt_m) / dt,
+    )
+
+
+def _predict_point(point: GeoPoint, velocity: GeoVelocity, lead_s: float) -> GeoPoint:
+    """Extrapola ``point`` ``lead_s`` segundos à frente, à velocidade estimada."""
+    return GeoPoint(
+        lat_deg=point.lat_deg + velocity.lat_deg_per_s * lead_s,
+        lon_deg=point.lon_deg + velocity.lon_deg_per_s * lead_s,
+        alt_m=point.alt_m + velocity.alt_m_per_s * lead_s,
+    )
 
 
 def _geodetic_to_ecef(point: GeoPoint) -> tuple[float, float, float]:
@@ -235,6 +290,11 @@ class LinearTrajectory:
 @dataclass
 class GeoTrackerState:
     target: GeoPoint | None = None
+    """Última posição realmente recebida (verdade de telemetria)."""
+    predicted_target: GeoPoint | None = None
+    """Posição para onde o PTU foi de fato comandado (alvo + antecipação)."""
+    velocity: GeoVelocity | None = None
+    """Velocidade estimada do alvo; ``None`` até haver 2 posições."""
     last_look: LookAngles | None = None
 
 
@@ -254,15 +314,26 @@ class GeoTracker:
     repetidamente com a posição mais recente recebida por telemetria —
     exatamente o que uma estação de solo real faz.
 
+    Com ``lead_seconds > 0``, cada chamada estima a velocidade do alvo
+    (diferença finita entre a posição atual e a anterior) e aponta
+    ``lead_seconds`` à frente — a técnica de predição/antecipação
+    (rate-aided tracking) usada por antenas de rastreamento reais para
+    compensar o atraso de decodificar telemetria, calcular o apontamento
+    e mover o pedestal. Isto é uma extensão própria deste simulador, não
+    um parâmetro do comando real ``GG`` (ver docstring do módulo).
+
     O alinhamento azimutal (o que "pan = 0°" significa fisicamente — via
     de regra, norte verdadeiro) é responsabilidade de quem instala a
     unidade, igual num sistema real: aqui isso é implícito na convenção
     já usada pelo resto do simulador (pan 0° = referência frontal fixa).
     """
 
-    def __init__(self, device):
+    def __init__(self, device, lead_seconds: float = 0.0):
         self.device = device
+        self.lead_seconds = lead_seconds
         self.state = GeoTrackerState()
+        self._previous_target: GeoPoint | None = None
+        self._previous_time: float | None = None
 
     def observer(self) -> GeoPoint:
         pose = self.device.gpm_pose
@@ -270,9 +341,29 @@ class GeoTracker:
             lat_deg=pose.latitude_deg, lon_deg=pose.longitude_deg, alt_m=pose.altitude_m
         )
 
-    def set_target(self, point: GeoPoint) -> LookAngles:
-        look = look_angles(self.observer(), point)
+    def set_target(self, point: GeoPoint, at: float | None = None) -> LookAngles:
+        """Aponta para ``point`` agora (comando real ``GG``).
+
+        ``at`` é o instante (``time.monotonic()``) desta atualização —
+        normalmente deixado para o relógio real; um valor explícito serve
+        só para testes determinísticos da predição por velocidade.
+        """
+        now = time.monotonic() if at is None else at
+
+        velocity = None
+        if self._previous_target is not None and self._previous_time is not None:
+            velocity = _estimate_velocity(self._previous_target, self._previous_time, point, now)
+        self._previous_target = point
+        self._previous_time = now
+
+        aim_point = point
+        if velocity is not None and self.lead_seconds > 0.0:
+            aim_point = _predict_point(point, velocity, self.lead_seconds)
+
+        look = look_angles(self.observer(), aim_point)
         self.state.target = point
+        self.state.predicted_target = aim_point
+        self.state.velocity = velocity
         self.state.last_look = look
 
         pan_deg = _normalize_signed_degrees(look.azimuth_deg)
@@ -281,5 +372,6 @@ class GeoTracker:
         return look
 
     def reset(self) -> None:
-        self.state.target = None
-        self.state.last_look = None
+        self.state = GeoTrackerState()
+        self._previous_target = None
+        self._previous_time = None

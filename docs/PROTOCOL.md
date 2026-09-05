@@ -293,6 +293,36 @@ trajetória de demonstração (`LinearTrajectory`, não é comando do
 fabricante — só um gerador de posições de GPS simuladas) usam o mesmo
 `GG` real por baixo dos panos.
 
+### Predição por velocidade (rate-aided tracking) — extensão do simulador, não um comando DPCL
+
+Em qualquer sistema real de rastreamento de telemetria (a "Antenna
+Control Unit" de um campo de provas), decodificar o quadro de GPS
+recebido, calcular azimute/elevação e mover o pedestal levam tempo — a
+antena está sempre correndo atrás da posição real do alvo. A técnica
+padrão para compensar isso é estimar a velocidade do alvo a partir de
+duas posições consecutivas e apontar um pouco **à frente** de onde ele
+estava por último (o mesmo princípio de um preditor α-β) — não onde ele
+estava exatamente. Autotrack por RF (malha fechada no próprio sinal
+recebido) é o outro mecanismo real usado para o mesmo fim, mas está fora
+do escopo deste simulador (exigiria modelar o padrão de ganho da antena
+e um receptor monopulso, um subsistema de RF à parte da geodesia).
+
+`GeoTracker.lead_seconds` (`pantiltsim/tracking.py`) implementa a
+predição por velocidade: cada `set_target()` (ou seja, cada `GG` real)
+estima a velocidade do alvo por diferença finita entre a chamada atual e
+a anterior (graus/segundo em lat/lon, m/s em altitude — uma
+linearização de curto prazo, o mesmo espírito de `LinearTrajectory`), e
+aponta `lead_seconds` segundos à frente dessa estimativa. Com
+`lead_seconds = 0` (padrão), o comportamento é idêntico ao `GG` puro —
+aponta exatamente para a posição recebida.
+
+**Isto não é um comando ou parâmetro do protocolo real** — o `GG`
+confirmado no manual não tem argumento de antecipação. É exposto só via
+GUI (aba "Rastreamento GPS" → grupo "Predição por velocidade") e API
+Python (`device.geo_tracker.lead_seconds`), nunca como sintaxe DPCL
+inventada — a mesma disciplina já adotada para o resto do rastreamento
+contínuo de alvo. Ver `tests/test_tracking.py` para os casos de teste.
+
 ### O que ainda não foi confirmado
 
 `GC` (calibrar a partir dos landmarks apontados), `GS` (status do GPM),

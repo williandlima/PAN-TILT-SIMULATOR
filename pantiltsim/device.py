@@ -523,5 +523,8 @@ class PanTiltDevice:
                 "gpm_landmark_count": len(self.gpm_landmarks),
                 "geo_tracking": self.geo_tracker.state.target is not None,
                 "geo_target": self.geo_tracker.state.target,
+                "geo_predicted_target": self.geo_tracker.state.predicted_target,
+                "geo_velocity": self.geo_tracker.state.velocity,
+                "geo_lead_seconds": self.geo_tracker.lead_seconds,
                 "geo_look": self.geo_tracker.state.last_look,
             }

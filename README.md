@@ -48,9 +48,14 @@ demonstração visual do comportamento do equipamento.
    aponta o pan-tilt para uma coordenada geográfica agora — rastrear um
    veículo em movimento (aeronave, drone, foguete de sondagem) é chamá-lo
    de novo a cada posição de GPS recebida, com geodesia WGS84 completa
-   (geodésico → ECEF → ENU). Aba dedicada na GUI, com trajetória de
-   demonstração para ver o rastreamento em ação sem hardware GPS real —
-   ver [`docs/PROTOCOL.md`](docs/PROTOCOL.md).
+   (geodésico → ECEF → ENU). Inclui **predição por velocidade**
+   (rate-aided tracking, extensão do simulador — `GeoTracker.lead_seconds`):
+   estima a velocidade do alvo entre duas chamadas de `GG` e aponta um
+   pouco à frente, compensando o atraso real de decodificar telemetria e
+   mover o pedestal, como uma Antenna Control Unit de campo de provas
+   faz de verdade. Aba dedicada na GUI, com trajetória de demonstração
+   para ver o rastreamento em ação sem hardware GPS real — ver
+   [`docs/PROTOCOL.md`](docs/PROTOCOL.md).
 
 ## Instalação
 
@@ -176,7 +181,7 @@ pip install -e ".[dev]"
 pytest
 ```
 
-77 testes, em quatro níveis:
+82 testes, em quatro níveis:
 
 - `tests/test_device.py` — física do movimento, limites, micropasso,
   modos.
@@ -187,7 +192,8 @@ pytest
   com testes que reproduzem literalmente os exemplos do manual oficial.
 - `tests/test_tracking.py` — a geodesia WGS84 do rastreamento de antena
   (conversão geodésico → ECEF → ENU, azimute/elevação/distância) contra
-  casos de referência conferidos à mão.
+  casos de referência conferidos à mão, e a predição por velocidade
+  (rate-aided tracking) do `GeoTracker`.
 - `tests/test_end_to_end_serial.py` — **ponta a ponta por uma porta
   serial real** (par de PTYs): um controlador externo consulta resolução,
   comanda movimento, aguarda com `A`, dá halt, envia vários comandos numa

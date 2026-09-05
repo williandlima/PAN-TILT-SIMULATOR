@@ -566,7 +566,12 @@ class MainWindow(QMainWindow):
             "coordenada agora (ação imediata, como PP/TP — não um modo "
             "liga/desliga). Rastrear um veículo em movimento é chamar "
             "<b>GG</b> de novo a cada posição de GPS recebida — é isso que a "
-            "trajetória de demonstração abaixo faz. Matemática WGS84 completa "
+            "trajetória de demonstração abaixo faz. A <b>predição por "
+            "velocidade</b> (extensão deste simulador, não um parâmetro do "
+            "comando real) estima a velocidade do alvo entre duas chamadas "
+            "de GG e aponta um pouco à frente — compensando o atraso real de "
+            "decodificar telemetria e mover o pedestal, como uma antena de "
+            "rastreamento de verdade faz. Matemática WGS84 completa "
             "(geodésico → ECEF → ENU). Ver Ajuda → Comandos DPCL e "
             "docs/PROTOCOL.md para as fontes."
         )
@@ -599,6 +604,24 @@ class MainWindow(QMainWindow):
         target_form.addRow(set_target_btn)
         layout.addWidget(target_box)
 
+        lead_box = QGroupBox("Predição por velocidade (rate-aided tracking — extensão do simulador)")
+        lead_form = QFormLayout(lead_box)
+        self.lead_seconds_spin = QDoubleSpinBox()
+        self.lead_seconds_spin.setRange(0.0, 10.0)
+        self.lead_seconds_spin.setDecimals(2)
+        self.lead_seconds_spin.setSingleStep(0.1)
+        self.lead_seconds_spin.setSuffix(" s")
+        self.lead_seconds_spin.setToolTip(
+            "Estima a velocidade do alvo entre duas atualizações de GG e "
+            "aponta essa quantidade de segundos à frente — compensa o "
+            "atraso real de decodificar telemetria e mover o pedestal. "
+            "0 = desligado (aponta exatamente para a posição recebida). "
+            "Não é um parâmetro do comando GG real, só deste simulador."
+        )
+        self.lead_seconds_spin.valueChanged.connect(self._set_lead_seconds)
+        lead_form.addRow("Antecipação:", self.lead_seconds_spin)
+        layout.addWidget(lead_box)
+
         demo_box = QGroupBox("Trajetória de demonstração (simula o feed de GPS do veículo)")
         demo_form = QFormLayout(demo_box)
         self.demo_heading_spin = QDoubleSpinBox()
@@ -628,7 +651,13 @@ class MainWindow(QMainWindow):
         geo_grid = QGridLayout(geo_status_box)
         self.geo_labels: dict[str, QLabel] = {}
         for row, (title, key) in enumerate(
-            [("Azimute", "az"), ("Elevação", "el"), ("Distância", "range")]
+            [
+                ("Azimute", "az"),
+                ("Elevação", "el"),
+                ("Distância", "range"),
+                ("Velocidade estimada", "velocity"),
+                ("Alvo previsto", "predicted"),
+            ]
         ):
             geo_grid.addWidget(QLabel(f"{title}:"), row, 0)
             label = QLabel("—")
@@ -799,6 +828,10 @@ class MainWindow(QMainWindow):
         alt = self.target_alt_spin.value()
         self._send_local(f"GG{lat},{lon},{alt}")
 
+    def _set_lead_seconds(self, value: float) -> None:
+        """Não é um comando DPCL: ajusta a predição por velocidade direto no tracker."""
+        self.device.geo_tracker.lead_seconds = value
+
     def _toggle_demo_trajectory(self) -> None:
         if self._demo_trajectory is None:
             start = GeoPoint(
@@ -896,6 +929,26 @@ class MainWindow(QMainWindow):
             self.geo_labels["az"].setText("—")
             self.geo_labels["el"].setText("—")
             self.geo_labels["range"].setText("—")
+
+        velocity = snap.get("geo_velocity")
+        if velocity is not None:
+            self.geo_labels["velocity"].setText(
+                f"{velocity.lat_deg_per_s:.6f}°/s lat · {velocity.lon_deg_per_s:.6f}°/s lon · "
+                f"{velocity.alt_m_per_s:.2f} m/s alt"
+            )
+        else:
+            self.geo_labels["velocity"].setText("— (aguardando 2ª posição)")
+
+        predicted = snap.get("geo_predicted_target")
+        target = snap.get("geo_target")
+        if predicted is not None and snap.get("geo_lead_seconds", 0.0) > 0.0 and predicted != target:
+            self.geo_labels["predicted"].setText(
+                f"{predicted.lat_deg:.5f}, {predicted.lon_deg:.5f}, {predicted.alt_m:.1f} m"
+            )
+        elif predicted is not None:
+            self.geo_labels["predicted"].setText("= alvo recebido (sem antecipação)")
+        else:
+            self.geo_labels["predicted"].setText("—")
 
         self._sync_widgets(snap)
 

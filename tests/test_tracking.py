@@ -167,3 +167,74 @@ def test_geo_tracker_reset_clears_target_and_last_look():
     tracker.reset()
     assert tracker.state.target is None
     assert tracker.state.last_look is None
+
+
+# ---------------------------------------------------------------------------
+# Predição por velocidade (rate-aided tracking) — extensão própria deste
+# simulador, não um parâmetro do comando real GG (ver docstring do módulo).
+# Os testes passam `at=` explícito para não depender do relógio real.
+def test_geo_tracker_first_fix_has_no_velocity():
+    device = build_device()
+    tracker = GeoTracker(device, lead_seconds=1.0)
+    tracker.set_target(GeoPoint(lat_deg=0.0, lon_deg=1.0, alt_m=0.0), at=0.0)
+
+    assert tracker.state.velocity is None
+    # Sem velocidade estimada ainda, aponta exatamente para o alvo recebido.
+    assert tracker.state.predicted_target == tracker.state.target
+
+
+def test_geo_tracker_estimates_velocity_from_two_fixes():
+    device = build_device()
+    tracker = GeoTracker(device)
+    tracker.set_target(GeoPoint(lat_deg=0.0, lon_deg=0.0, alt_m=0.0), at=0.0)
+    tracker.set_target(GeoPoint(lat_deg=0.0, lon_deg=2.0, alt_m=100.0), at=2.0)
+
+    velocity = tracker.state.velocity
+    assert velocity is not None
+    assert velocity.lat_deg_per_s == pytest.approx(0.0)
+    assert velocity.lon_deg_per_s == pytest.approx(1.0)  # 2° em 2s
+    assert velocity.alt_m_per_s == pytest.approx(50.0)  # 100m em 2s
+
+
+def test_geo_tracker_without_lead_points_at_raw_target():
+    """lead_seconds=0 (padrão) nunca antecipa — comportamento pré-existente preservado."""
+    device = build_device()
+    tracker = GeoTracker(device)
+    tracker.set_target(GeoPoint(lat_deg=0.0, lon_deg=0.0, alt_m=0.0), at=0.0)
+    tracker.set_target(GeoPoint(lat_deg=0.0, lon_deg=2.0, alt_m=0.0), at=2.0)
+
+    assert tracker.state.velocity is not None  # já dá para estimar
+    assert tracker.state.predicted_target == tracker.state.target  # mas não antecipa
+
+
+def test_geo_tracker_leads_target_when_lead_seconds_set():
+    device = build_device()
+    tracker = GeoTracker(device, lead_seconds=1.0)
+    tracker.set_target(GeoPoint(lat_deg=0.0, lon_deg=0.0, alt_m=0.0), at=0.0)
+    tracker.set_target(GeoPoint(lat_deg=0.0, lon_deg=2.0, alt_m=0.0), at=2.0)  # 1°/s a leste
+
+    # Antecipa 1s a mais na mesma direção: 2.0 + 1.0*1s = 3.0°.
+    predicted = tracker.state.predicted_target
+    assert predicted.lon_deg == pytest.approx(3.0)
+    assert predicted != tracker.state.target  # alvo "cru" continua em 2.0°
+
+    # O pan-tilt aponta para a posição prevista, não para a recebida.
+    from pantiltsim.tracking import look_angles
+
+    expected = look_angles(tracker.observer(), predicted)
+    pan_deg = device.pan.counts_to_deg(device.pan.target_position)
+    assert pan_deg == pytest.approx(expected.azimuth_deg, abs=0.5)
+
+
+def test_geo_tracker_reset_clears_velocity_history():
+    device = build_device()
+    tracker = GeoTracker(device, lead_seconds=1.0)
+    tracker.set_target(GeoPoint(lat_deg=0.0, lon_deg=0.0, alt_m=0.0), at=0.0)
+    tracker.set_target(GeoPoint(lat_deg=0.0, lon_deg=2.0, alt_m=0.0), at=2.0)
+    assert tracker.state.velocity is not None
+
+    tracker.reset()
+    tracker.set_target(GeoPoint(lat_deg=0.0, lon_deg=5.0, alt_m=0.0), at=10.0)
+
+    assert tracker.state.velocity is None  # sem "memória" da posição anterior ao reset
+    assert tracker.state.predicted_target == tracker.state.target
