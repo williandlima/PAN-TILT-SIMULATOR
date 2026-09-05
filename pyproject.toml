@@ -21,5 +21,8 @@ ptu-sim = "pantiltsim.main:main"
 [tool.setuptools.packages.find]
 include = ["pantiltsim*"]
 
+[tool.setuptools.package-data]
+pantiltsim = ["gui/assets/*.png"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

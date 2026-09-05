@@ -11,9 +11,10 @@ from __future__ import annotations
 
 import logging
 import time
+from pathlib import Path
 
 from PyQt5.QtCore import QObject, Qt, QTimer, pyqtSignal
-from PyQt5.QtGui import QKeySequence
+from PyQt5.QtGui import QIcon, QKeySequence, QPixmap
 from PyQt5.QtWidgets import (
     QAction,
     QCheckBox,
@@ -44,6 +45,141 @@ from .help_dialog import HelpDialog, terminal_help_text
 from .pantilt_widget import PanTiltWidget
 
 log = logging.getLogger(__name__)
+
+_ASSETS_DIR = Path(__file__).parent / "assets"
+_LOGO_PATH = _ASSETS_DIR / "avibras_aeroco_logo.png"
+
+# Identidade visual Avibras Aeroco — cores extraídas da logo oficial
+# (amostragem de pixel: azul-marinho e laranja dominantes da imagem).
+_BRAND_NAVY = "#1e386b"
+_BRAND_NAVY_LIGHT = "#2c4d8f"
+_BRAND_NAVY_DARK = "#142748"
+_BRAND_ORANGE = "#ef800d"
+_BRAND_BG = "#f4f6fa"
+_BRAND_BORDER = "#c7cedb"
+
+_STYLESHEET = f"""
+QMainWindow, QDialog {{
+    background: {_BRAND_BG};
+}}
+QWidget#brandHeader {{
+    background: {_BRAND_NAVY};
+    border-bottom: 3px solid {_BRAND_ORANGE};
+}}
+QLabel#brandTitle {{
+    color: white;
+    font-size: 13pt;
+    font-weight: 600;
+}}
+QLabel#brandSubtitle {{
+    color: {_BRAND_ORANGE};
+    font-size: 9pt;
+    font-weight: 600;
+}}
+QMenuBar {{
+    background: {_BRAND_NAVY};
+    color: white;
+}}
+QMenuBar::item {{
+    background: transparent;
+    padding: 4px 10px;
+}}
+QMenuBar::item:selected {{
+    background: {_BRAND_ORANGE};
+    color: {_BRAND_NAVY_DARK};
+}}
+QMenu {{
+    background: white;
+    border: 1px solid {_BRAND_NAVY};
+}}
+QMenu::item:selected {{
+    background: {_BRAND_ORANGE};
+    color: white;
+}}
+QStatusBar {{
+    background: {_BRAND_NAVY};
+    color: white;
+}}
+QGroupBox {{
+    background: white;
+    border: 1px solid {_BRAND_BORDER};
+    border-radius: 6px;
+    margin-top: 14px;
+    padding-top: 6px;
+    font-weight: 600;
+    color: {_BRAND_NAVY};
+}}
+QGroupBox::title {{
+    subcontrol-origin: margin;
+    left: 10px;
+    padding: 0 6px;
+    color: {_BRAND_NAVY};
+}}
+QTabWidget::pane {{
+    border: 1px solid {_BRAND_BORDER};
+    background: white;
+    border-radius: 4px;
+}}
+QTabBar::tab {{
+    background: #e4e8f0;
+    color: {_BRAND_NAVY};
+    padding: 6px 14px;
+    border: 1px solid {_BRAND_BORDER};
+    border-bottom: none;
+    border-top-left-radius: 4px;
+    border-top-right-radius: 4px;
+}}
+QTabBar::tab:selected {{
+    background: {_BRAND_NAVY};
+    color: white;
+    border-bottom: 3px solid {_BRAND_ORANGE};
+}}
+QTabBar::tab:hover:!selected {{
+    background: {_BRAND_NAVY_LIGHT};
+    color: white;
+}}
+QPushButton {{
+    background: {_BRAND_NAVY};
+    color: white;
+    border: none;
+    border-radius: 4px;
+    padding: 6px 12px;
+}}
+QPushButton:hover {{
+    background: {_BRAND_NAVY_LIGHT};
+}}
+QPushButton:pressed {{
+    background: {_BRAND_NAVY_DARK};
+}}
+QPushButton:disabled {{
+    background: #b9c0cf;
+    color: #eef1f6;
+}}
+QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox, QPlainTextEdit {{
+    background: white;
+    border: 1px solid #b9c0cf;
+    border-radius: 3px;
+    padding: 2px 4px;
+    selection-background-color: {_BRAND_ORANGE};
+    selection-color: white;
+}}
+QComboBox::drop-down {{
+    border: none;
+}}
+QCheckBox::indicator {{
+    width: 13px;
+    height: 13px;
+    border-radius: 2px;
+}}
+QCheckBox::indicator:checked {{
+    background: {_BRAND_ORANGE};
+    border: 1px solid {_BRAND_NAVY};
+}}
+QCheckBox::indicator:unchecked {{
+    background: white;
+    border: 1px solid #b9c0cf;
+}}
+"""
 
 _STEP_MODE_ITEMS = [
     ("Full step", "F"),
@@ -77,6 +213,9 @@ class MainWindow(QMainWindow):
         self.device = device or PanTiltDevice()
         self.setWindowTitle(f"Simulador {self.device.model_name} — Pan-Tilt via RS-485/USB")
         self.resize(1180, 720)
+        self.setStyleSheet(_STYLESHEET)
+        if _LOGO_PATH.exists():
+            self.setWindowIcon(QIcon(str(_LOGO_PATH)))
 
         self._log_bridge = _LogBridge()
         self._log_bridge.message.connect(self._append_log)
@@ -104,7 +243,14 @@ class MainWindow(QMainWindow):
     def _build_ui(self) -> None:
         central = QWidget(self)
         self.setCentralWidget(central)
-        root = QHBoxLayout(central)
+        outer = QVBoxLayout(central)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        outer.addWidget(self._build_brand_header())
+
+        body = QWidget()
+        root = QHBoxLayout(body)
+        outer.addWidget(body, stretch=1)
 
         self.pantilt_widget = PanTiltWidget(self)
         root.addWidget(self.pantilt_widget, stretch=3)
@@ -124,6 +270,34 @@ class MainWindow(QMainWindow):
         container.setLayout(side)
         container.setMinimumWidth(430)
         root.addWidget(container, stretch=2)
+
+    def _build_brand_header(self) -> QWidget:
+        """Faixa superior com a identidade visual Avibras Aeroco."""
+        header = QWidget()
+        header.setObjectName("brandHeader")
+        layout = QHBoxLayout(header)
+        layout.setContentsMargins(16, 8, 16, 8)
+        layout.setSpacing(12)
+
+        if _LOGO_PATH.exists():
+            logo_label = QLabel()
+            pixmap = QPixmap(str(_LOGO_PATH))
+            if not pixmap.isNull():
+                logo_label.setPixmap(pixmap.scaledToHeight(40, Qt.SmoothTransformation))
+            layout.addWidget(logo_label)
+
+        titles = QVBoxLayout()
+        titles.setSpacing(0)
+        title = QLabel(f"Simulador {self.device.model_name}")
+        title.setObjectName("brandTitle")
+        subtitle = QLabel("Pan-Tilt via RS-485/USB — Avibras Aeroco")
+        subtitle.setObjectName("brandSubtitle")
+        titles.addWidget(title)
+        titles.addWidget(subtitle)
+        layout.addLayout(titles)
+
+        layout.addStretch(1)
+        return header
 
     # -- menus e ajuda ---------------------------------------------------
     def _build_menu(self) -> None:
@@ -175,7 +349,7 @@ class MainWindow(QMainWindow):
             self,
             "Sobre o simulador",
             f"<b>Simulador {snap['model']}</b><br>"
-            f"pantiltsim {__version__}<br><br>"
+            f"pantiltsim {__version__} — Avibras Aeroco<br><br>"
             "Simulador de pan-tilt que fala o protocolo ASCII do fabricante "
             "(DPCL) por RS-485 ou USB.<br><br>"
             f"Resolução atual: {snap['pan_resolution_arcsec']:.4f} ″/contagem (pan)<br>"
