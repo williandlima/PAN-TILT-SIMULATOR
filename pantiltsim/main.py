@@ -39,6 +39,7 @@ def _list_ports() -> int:
 
 def _run_gui(device) -> int:
     try:
+        from PyQt5.QtCore import Qt
         from PyQt5.QtWidgets import QApplication
 
         from .gui.main_window import MainWindow
@@ -50,6 +51,13 @@ def _run_gui(device) -> int:
             file=sys.stderr,
         )
         return 2
+
+    # Precisa vir ANTES de criar o QApplication. Sem isso, em monitores com
+    # escala de tela (comum no Windows), o layout às vezes calcula o tamanho
+    # certo mas alguns widgets não são repintados até a janela ser mexida —
+    # um glitch de redesenho, não uma falha real de dados.
+    QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
+    QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
 
     app = QApplication(sys.argv)
     window = MainWindow(device=device)
@@ -72,7 +80,7 @@ modos de teste:
   autoteste    Aceitação ponta a ponta, sem hardware (Linux/macOS).
                  python3 tools/autoteste.py
   suíte        pip install -e ".[dev]" && pytest
-               Linux: 44 passam. Windows: 37 passam e 7 são pulados (usam PTY).
+               Linux: 82 passam. Windows: 75 passam e 7 são pulados (usam PTY).
 
 o núcleo, em uma frase:
   O protocolo do fabricante trabalha em CONTAGENS, não em graus. Pergunte a
@@ -80,12 +88,14 @@ o núcleo, em uma frase:
   fixe a conversão no código, porque ela muda com o micropasso e o modelo.
 
 ajuda dentro do programa:
-  Na interface: menu Ajuda, ou F1 (primeiros passos), F2 (modos de teste) e
-  F3 (comandos DPCL). No terminal DPCL, digite ? para o resumo dos comandos.
+  Na interface: menu Ajuda, ou F1 (primeiros passos), F2 (modos de teste),
+  F3 (comandos DPCL) e F4 (Geo Pointing Module / rastreamento GPS). No
+  terminal DPCL, digite ? para o resumo dos comandos.
 
 documentação:
-  docs/PROCEDIMENTO.md  instalação, teste e utilização, passo a passo
-  docs/PROTOCOL.md      protocolo completo e o que foi confirmado em hardware
+  docs/GUIA_DO_OPERADOR.md  guia para quem só opera a interface (sem jargão)
+  docs/PROCEDIMENTO.md      instalação, teste e utilização, passo a passo
+  docs/PROTOCOL.md          protocolo completo e o que foi confirmado em hardware
 """
 
 
